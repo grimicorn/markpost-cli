@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRecord,
   deleteRecords,
+  fetchAllRecords,
   fetchPaginatedRecords,
   fetchRecord,
 } from '@/libs/records.js';
@@ -34,6 +35,65 @@ function mockFetch(responseBody: object, ok = true) {
     json: () => Promise.resolve(responseBody),
   });
 }
+
+const mockRecord2: Record = {
+  uuid: 'def-456',
+  title: 'Test Title 2',
+  content: 'Test Content 2',
+  createdAt: '2024-01-02T00:00:00Z',
+};
+
+describe('fetchAllRecords', () => {
+  it('returns [] when the initial fetch fails', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+    expect(await fetchAllRecords()).toEqual([]);
+  });
+
+  it('returns records directly when there is only one page', async () => {
+    mockFetch({
+      data: [mockRecord],
+      meta: { total: 1, pageCount: 1, size: 100, page: 1 },
+    });
+    expect(await fetchAllRecords()).toEqual([mockRecord]);
+  });
+
+  it('fetches and combines all pages when pageCount > 1', async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            data: [mockRecord],
+            meta: { total: 2, pageCount: 2, size: 1, page: 1 },
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            data: [mockRecord2],
+            meta: { total: 2, pageCount: 2, size: 1, page: 2 },
+          }),
+      });
+    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+  });
+
+  it('returns partial results if a subsequent page fetch fails', async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            data: [mockRecord],
+            meta: { total: 2, pageCount: 2, size: 1, page: 1 },
+          }),
+      })
+      .mockRejectedValueOnce(new Error('Network error'));
+    expect(await fetchAllRecords()).toEqual([mockRecord]);
+  });
+});
 
 describe('fetchPaginatedRecords', () => {
   it('calls fetch with the correct URL and auth header', async () => {

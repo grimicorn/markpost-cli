@@ -7,6 +7,33 @@ import {
 import { ApiDeleteMeta, ApiResponse } from '@/types/api.types.js';
 import { Record, PaginatedRecordsMeta } from '@/types/records.types.js';
 
+export const fetchAllRecords = async (): Promise<Record[]> => {
+  const initial = await fetchPaginatedRecords();
+
+  if (!initial) {
+    return [];
+  }
+
+  if (initial?.meta?.pageCount === 1) {
+    return initial.records;
+  }
+
+  let number = initial?.meta?.page + 1;
+  const records = [initial.records];
+  while (number <= initial?.meta?.pageCount) {
+    const subsequent = await fetchPaginatedRecords(number);
+
+    if (!subsequent) {
+      break;
+    }
+
+    number = subsequent?.meta?.page + 1;
+    records.push(subsequent.records);
+  }
+
+  return records.flat(1) as Record[];
+};
+
 export const fetchPaginatedRecords = async (
   number: number = 1,
   size: number = 100,
