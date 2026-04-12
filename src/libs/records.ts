@@ -8,8 +8,7 @@ import { ApiDeleteMeta, ApiResponse } from '@/types/api.types.js';
 
 import { Record } from '@/types/records.types.js';
 
-// @todo Test recordsIndex
-export const recordsIndex = async (
+export const fetchRecords = async (
   number: number = 1,
   size: number = 100,
 ): Promise<Record[]> => {
@@ -40,8 +39,7 @@ export const recordsIndex = async (
   }
 };
 
-// @todo Test recordsCreate
-export const recordsCreate = async (
+export const createRecord = async (
   title: string,
   content: string,
 ): Promise<Record | null> => {
@@ -71,7 +69,7 @@ export const recordsCreate = async (
     return body.data?.attributes ? (body.data?.attributes as Record) : null;
   } catch (error) {
     logErrorMessage(
-      `recordsCreate["${title}"]`,
+      `createRecord["${title}"]`,
       error instanceof Error ? error.message : String(error),
     );
 
@@ -79,8 +77,7 @@ export const recordsCreate = async (
   }
 };
 
-// @todo Test recordsShow
-export const recordsShow = async (uuid: string): Promise<Record | null> => {
+export const fetchRecord = async (uuid: string): Promise<Record | null> => {
   try {
     const response = await fetch(`${getBaseUrl()}/api/records/${uuid}`, {
       headers: {
@@ -97,7 +94,7 @@ export const recordsShow = async (uuid: string): Promise<Record | null> => {
     return body.data?.attributes ? (body.data?.attributes as Record) : null;
   } catch (error) {
     logErrorMessage(
-      `recordsShow["${uuid}"]`,
+      `fetchRecord["${uuid}"]`,
       error instanceof Error ? error.message : String(error),
     );
 
@@ -105,8 +102,7 @@ export const recordsShow = async (uuid: string): Promise<Record | null> => {
   }
 };
 
-// @todo Test recordsDelete
-export const recordsDelete = async (
+export const deleteRecords = async (
   uuids: string[],
 ): Promise<ApiDeleteMeta | null> => {
   try {
@@ -134,7 +130,7 @@ export const recordsDelete = async (
     return body.meta ? (body.meta as ApiDeleteMeta) : null;
   } catch (error) {
     logErrorMessage(
-      `recordsDelete["${uuids.join(', ')}"]`,
+      `deleteRecords["${uuids.join(', ')}"]`,
       error instanceof Error ? error.message : String(error),
     );
 

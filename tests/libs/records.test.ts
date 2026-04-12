@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  recordsCreate,
-  recordsDelete,
-  recordsIndex,
-  recordsShow,
+  createRecord,
+  deleteRecords,
+  fetchRecords,
+  fetchRecord,
 } from '@/libs/records.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Record } from '@/types/records.types.js';
@@ -33,10 +33,10 @@ function mockFetch(responseBody: object, ok = true) {
   });
 }
 
-describe('recordsIndex', () => {
+describe('fetchRecords', () => {
   it('calls fetch with the correct URL and auth header', async () => {
     mockFetch({ data: [mockRecord] });
-    await recordsIndex(2, 50);
+    await fetchRecords(2, 50);
     expect(global.fetch).toHaveBeenCalledWith(
       'https://example.com/api/records?page[number]=2&page[size]=50',
       expect.objectContaining({
@@ -47,7 +47,7 @@ describe('recordsIndex', () => {
 
   it('returns records on success', async () => {
     mockFetch({ data: [mockRecord] });
-    expect(await recordsIndex()).toEqual([mockRecord]);
+    expect(await fetchRecords()).toEqual([mockRecord]);
   });
 
   it('returns [] when the response contains errors', async () => {
@@ -55,19 +55,19 @@ describe('recordsIndex', () => {
       { data: { errors: [{ title: 'Error', detail: 'Server error' }] } },
       false,
     );
-    expect(await recordsIndex()).toEqual([]);
+    expect(await fetchRecords()).toEqual([]);
   });
 
   it('returns [] on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(await recordsIndex()).toEqual([]);
+    expect(await fetchRecords()).toEqual([]);
   });
 });
 
-describe('recordsCreate', () => {
+describe('createRecord', () => {
   it('calls fetch with POST, correct headers, and JSON:API body', async () => {
     mockFetch({ data: { attributes: mockRecord } });
-    await recordsCreate('Test Title', 'Test Content');
+    await createRecord('Test Title', 'Test Content');
     expect(global.fetch).toHaveBeenCalledWith(
       'https://example.com/api/records',
       expect.objectContaining({
@@ -88,7 +88,7 @@ describe('recordsCreate', () => {
 
   it('returns the record attributes on success', async () => {
     mockFetch({ data: { attributes: mockRecord } });
-    expect(await recordsCreate('Test Title', 'Test Content')).toEqual(
+    expect(await createRecord('Test Title', 'Test Content')).toEqual(
       mockRecord,
     );
   });
@@ -98,19 +98,19 @@ describe('recordsCreate', () => {
       { data: { errors: [{ title: 'Error', detail: 'Bad request' }] } },
       false,
     );
-    expect(await recordsCreate('Test Title', 'Test Content')).toBeNull();
+    expect(await createRecord('Test Title', 'Test Content')).toBeNull();
   });
 
   it('returns null on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(await recordsCreate('Test Title', 'Test Content')).toBeNull();
+    expect(await createRecord('Test Title', 'Test Content')).toBeNull();
   });
 });
 
-describe('recordsShow', () => {
+describe('fetchRecord', () => {
   it('calls fetch with the correct UUID in the URL', async () => {
     mockFetch({ data: { attributes: mockRecord } });
-    await recordsShow('abc-123');
+    await fetchRecord('abc-123');
     expect(global.fetch).toHaveBeenCalledWith(
       'https://example.com/api/records/abc-123',
       expect.objectContaining({
@@ -121,7 +121,7 @@ describe('recordsShow', () => {
 
   it('returns the record attributes on success', async () => {
     mockFetch({ data: { attributes: mockRecord } });
-    expect(await recordsShow('abc-123')).toEqual(mockRecord);
+    expect(await fetchRecord('abc-123')).toEqual(mockRecord);
   });
 
   it('returns null when the response contains errors', async () => {
@@ -129,19 +129,19 @@ describe('recordsShow', () => {
       { data: { errors: [{ title: 'Not Found', detail: 'Record missing' }] } },
       false,
     );
-    expect(await recordsShow('abc-123')).toBeNull();
+    expect(await fetchRecord('abc-123')).toBeNull();
   });
 
   it('returns null on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(await recordsShow('abc-123')).toBeNull();
+    expect(await fetchRecord('abc-123')).toBeNull();
   });
 });
 
-describe('recordsDelete', () => {
+describe('deleteRecords', () => {
   it('calls fetch with DELETE, correct headers, and JSON:API body', async () => {
     mockFetch({ meta: mockMeta });
-    await recordsDelete(['abc-123', 'def-456']);
+    await deleteRecords(['abc-123', 'def-456']);
     expect(global.fetch).toHaveBeenCalledWith(
       'https://example.com/api/records',
       expect.objectContaining({
@@ -162,7 +162,7 @@ describe('recordsDelete', () => {
 
   it('returns meta on success', async () => {
     mockFetch({ meta: mockMeta });
-    expect(await recordsDelete(['abc-123'])).toEqual(mockMeta);
+    expect(await deleteRecords(['abc-123'])).toEqual(mockMeta);
   });
 
   it('returns null when the response contains errors', async () => {
@@ -170,11 +170,11 @@ describe('recordsDelete', () => {
       { data: { errors: [{ title: 'Error', detail: 'Bad request' }] } },
       false,
     );
-    expect(await recordsDelete(['abc-123'])).toBeNull();
+    expect(await deleteRecords(['abc-123'])).toBeNull();
   });
 
   it('returns null on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(await recordsDelete(['abc-123'])).toBeNull();
+    expect(await deleteRecords(['abc-123'])).toBeNull();
   });
 });
