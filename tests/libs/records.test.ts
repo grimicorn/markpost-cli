@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createRecord,
   deleteRecords,
-  fetchRecords,
+  fetchPaginatedRecords,
   fetchRecord,
 } from '@/libs/records.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
@@ -26,6 +26,8 @@ const mockRecord: Record = {
 
 const mockMeta: ApiDeleteMeta = { deleted: 1 };
 
+const mockPaginatedMeta = { total: 1, pageCount: 1, size: 100, page: 1 };
+
 function mockFetch(responseBody: object, ok = true) {
   global.fetch = vi.fn().mockResolvedValue({
     ok,
@@ -33,10 +35,10 @@ function mockFetch(responseBody: object, ok = true) {
   });
 }
 
-describe('fetchRecords', () => {
+describe('fetchPaginatedRecords', () => {
   it('calls fetch with the correct URL and auth header', async () => {
-    mockFetch({ data: [mockRecord] });
-    await fetchRecords(2, 50);
+    mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
+    await fetchPaginatedRecords(2, 50);
     expect(global.fetch).toHaveBeenCalledWith(
       'https://example.com/api/records?page[number]=2&page[size]=50',
       expect.objectContaining({
@@ -45,22 +47,25 @@ describe('fetchRecords', () => {
     );
   });
 
-  it('returns records on success', async () => {
-    mockFetch({ data: [mockRecord] });
-    expect(await fetchRecords()).toEqual([mockRecord]);
+  it('returns records and meta on success', async () => {
+    mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
+    expect(await fetchPaginatedRecords()).toEqual({
+      records: [mockRecord],
+      meta: mockPaginatedMeta,
+    });
   });
 
-  it('returns [] when the response contains errors', async () => {
+  it('returns null when the response contains errors', async () => {
     mockFetch(
       { data: { errors: [{ title: 'Error', detail: 'Server error' }] } },
       false,
     );
-    expect(await fetchRecords()).toEqual([]);
+    expect(await fetchPaginatedRecords()).toBeNull();
   });
 
-  it('returns [] on network failure', async () => {
+  it('returns null on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(await fetchRecords()).toEqual([]);
+    expect(await fetchPaginatedRecords()).toBeNull();
   });
 });
 

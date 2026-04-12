@@ -4,3 +4,10 @@ export type Record = {
   title: string;
   content: string;
 };
+
+export type PaginatedRecordsMeta = {
+  total: number;
+  pageCount: number;
+  size: number;
+  page: number;
+};

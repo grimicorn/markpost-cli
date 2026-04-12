@@ -5,13 +5,15 @@ import {
   logErrorMessage,
 } from '@/libs/api.js';
 import { ApiDeleteMeta, ApiResponse } from '@/types/api.types.js';
+import { Record, PaginatedRecordsMeta } from '@/types/records.types.js';
 
-import { Record } from '@/types/records.types.js';
-
-export const fetchRecords = async (
+export const fetchPaginatedRecords = async (
   number: number = 1,
   size: number = 100,
-): Promise<Record[]> => {
+): Promise<{
+  records: Record[];
+  meta: PaginatedRecordsMeta;
+} | null> => {
   try {
     const response = await fetch(
       `${getBaseUrl()}/api/records?page[number]=${number}&page[size]=${size}`,
@@ -28,14 +30,17 @@ export const fetchRecords = async (
       throw new Error(formatErrorMessages(body.data?.errors ?? []));
     }
 
-    return body.data ? (body.data as Record[]) : [];
+    return {
+      records: body.data as Record[],
+      meta: body.meta as PaginatedRecordsMeta,
+    };
   } catch (error) {
     logErrorMessage(
-      `recordsIndex`,
+      `fetchPaginatedRecords`,
       error instanceof Error ? error.message : String(error),
     );
 
-    return [];
+    return null;
   }
 };
 
