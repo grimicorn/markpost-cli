@@ -55,7 +55,7 @@ describe('fetchAllRecords', () => {
 
   it('returns records directly when there is only one page', async () => {
     mockFetch({
-      data: [mockRecord],
+      data: [{ attributes: mockRecord }],
       meta: { total: 1, pageCount: 1, size: 100, page: 1 },
     });
     expect(await fetchAllRecords()).toEqual([mockRecord]);
@@ -68,7 +68,7 @@ describe('fetchAllRecords', () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            data: [mockRecord],
+            data: [{ attributes: mockRecord }],
             meta: { total: 2, pageCount: 2, size: 1, page: 1 },
           }),
       })
@@ -76,7 +76,7 @@ describe('fetchAllRecords', () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            data: [mockRecord2],
+            data: [{ attributes: mockRecord2 }],
             meta: { total: 2, pageCount: 2, size: 1, page: 2 },
           }),
       });
@@ -90,7 +90,7 @@ describe('fetchAllRecords', () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            data: [mockRecord],
+            data: [{ attributes: mockRecord }],
             meta: { total: 2, pageCount: 2, size: 1, page: 1 },
           }),
       })
@@ -116,7 +116,7 @@ describe('fetchPaginatedRecords', () => {
   });
 
   it('returns records and meta on success', async () => {
-    mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
+    mockFetch({ data: [{ attributes: mockRecord }], meta: mockPaginatedMeta });
     expect(await fetchPaginatedRecords()).toEqual({
       records: [mockRecord],
       meta: mockPaginatedMeta,

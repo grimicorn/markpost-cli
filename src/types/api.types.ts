@@ -9,10 +9,17 @@ export type ApiDeleteMeta = {
   deleted: number;
 };
 
+export type ApiData = {
+  attributes?: object;
+  errors?: ApiError[];
+};
+
 export type ApiResponse = {
   meta?: object;
-  data?: {
-    attributes?: object;
-    errors?: ApiError[];
-  };
+  data?: ApiData;
+};
+
+export type ApiListResponse = {
+  meta?: object;
+  data?: ApiData[];
 };
