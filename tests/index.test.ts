@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Record } from '@/types/records.types.js';
 
-vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn() }));
+vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
@@ -25,12 +25,13 @@ describe('index', () => {
   });
 
   it('fetches all records and writes each as markdown', async () => {
-    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(deleteRecords).mockResolvedValue(undefined);
 
     await import('@/index.js');
 
@@ -38,17 +39,21 @@ describe('index', () => {
     expect(fetchAllRecords).toHaveBeenCalled();
     expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 0, [mockRecord]);
     expect(mockSpinner.success).toHaveBeenCalledWith('Fetched 1 records!');
+    expect(mockSpinner.start).toHaveBeenCalledWith('Writing records...');
     expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    expect(mockSpinner.start).toHaveBeenCalledWith('Deleting records...');
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
   });
 
   it('writes one markdown file per record', async () => {
     const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
-    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(deleteRecords).mockResolvedValue(undefined);
 
     await import('@/index.js');
 
@@ -56,6 +61,22 @@ describe('index', () => {
     expect(writeMarkdown).toHaveBeenCalledTimes(2);
     expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 0, records);
     expect(writeMarkdown).toHaveBeenCalledWith(mockRecord2, 1, records);
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123', 'def-456']);
+  });
+
+  it('exits early when no records are fetched', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchAllRecords).mockResolvedValue([]);
+
+    await import('@/index.js');
+
+    expect(mockSpinner.success).toHaveBeenCalledWith('No new records, exiting...');
+    expect(writeMarkdown).not.toHaveBeenCalled();
+    expect(deleteRecords).not.toHaveBeenCalled();
   });
 
   it('calls spinner.error and logs to console.error when fetchAllRecords throws', async () => {
