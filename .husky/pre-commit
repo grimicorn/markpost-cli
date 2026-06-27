@@ -1,2 +1,12 @@
+set -e
+
 npm run lint
 npm run test:ci
+
+# Secret scanning on staged changes only (deterministic-scanner layer).
+# Skipped with a notice if gitleaks is not installed locally; CI still enforces it.
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks git --staged --redact --config .gitleaks.toml
+else
+  echo "gitleaks not found — skipping local secret scan (CI will still enforce it). Install: https://github.com/gitleaks/gitleaks#installing"
+fi
