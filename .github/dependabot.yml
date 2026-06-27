@@ -1,15 +1,26 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
+  - package-ecosystem: npm
     directory: "/"
+    target-branch: main
     schedule:
-      interval: "weekly"
+      interval: weekly
     assignees:
-      - "grimicorn"
-
-  - package-ecosystem: "github-actions"
+      - grimicorn
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+  - package-ecosystem: github-actions
     directory: "/"
+    target-branch: main
     schedule:
-      interval: "weekly"
+      interval: weekly
     assignees:
-      - "grimicorn"
+      - grimicorn
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch

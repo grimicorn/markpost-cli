@@ -1,0 +1,32 @@
+# Gitleaks configuration for dh-sync-cli.
+# Extends the gitleaks default ruleset and adds project-specific rules.
+# Docs: https://github.com/gitleaks/gitleaks#configuration
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "clerk-secret-key"
+description = "Clerk secret key (sk_live_ / sk_test_)"
+# Only Clerk SECRET keys. Publishable keys (pk_live_/pk_test_) are public by
+# design and must NOT be flagged.
+regex = '''sk_(?:live|test)_[A-Za-z0-9]{20,}'''
+keywords = ["sk_live_", "sk_test_"]
+
+[[rules]]
+id = "postgres-connection-uri"
+description = "Postgres/Neon connection string with embedded credentials"
+# Matches postgres:// and postgresql:// URIs that include a user:password
+# component. The password group is required, so credential-free URIs are ignored.
+regex = '''postgres(?:ql)?:\/\/[^\s:@\/]+:[^\s:@\/]+@[^\s\/]+'''
+keywords = ["postgres://", "postgresql://"]
+
+[allowlist]
+description = "Global allowlist for example and fixture files"
+# Accepted risk: secrets committed into example/fixture files are intentionally
+# not flagged, since these hold placeholder credentials by design. Keep real
+# secrets out of these paths.
+paths = [
+  '''\.example$''',
+  '''(^|/)(tests?|__tests__|fixtures?|__fixtures__)/''',
+]
