@@ -1,28 +1,14 @@
-# dh-sync-cli
+# @markpost/cli
 
 CLI tool for sync.danholloran.me
 
 ## Installation
 
-This package is hosted on a private GitHub repository. To install it, you need a GitHub personal access token with `repo` scope.
-
-### 1. Create a GitHub token
-
-Go to [GitHub Settings → Developer Settings → Personal Access Tokens](https://github.com/settings/tokens) and create a token with `repo` scope.
-
-### 2. Set your GitHub token in your shell
-
 ```bash
-export GITHUB_TOKEN={YOUR_GITHUB_TOKEN}
+npm install -g @markpost/cli
 ```
 
-Add this to your `~/.zshrc` or `~/.bashrc` to persist it.
-
-### 3. Install the package
-
-```bash
-npm install -g @grimicorn/dh-sync-cli --//npm.pkg.github.com/:_authToken=$GITHUB_TOKEN
-```
+Once installed, run the CLI with the `markpost` command.
 
 ## Development
 
@@ -34,8 +20,8 @@ npm install -g @grimicorn/dh-sync-cli --//npm.pkg.github.com/:_authToken=$GITHUB
 ### Setup
 
 ```bash
-git clone https://github.com/grimicorn/dh-sync-cli.git
-cd dh-sync-cli
+git clone https://github.com/grimicorn/markpost-cli.git
+cd markpost-cli
 npm install
 ```
 

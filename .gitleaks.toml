@@ -1,4 +1,4 @@
-# Gitleaks configuration for dh-sync-cli.
+# Gitleaks configuration for @markpost/cli.
 # Extends the gitleaks default ruleset and adds project-specific rules.
 # Docs: https://github.com/gitleaks/gitleaks#configuration
 
