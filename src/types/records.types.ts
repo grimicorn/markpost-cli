@@ -7,7 +7,6 @@ export type Record = {
 
 export type PaginatedRecordsMeta = {
   total: number;
-  pageCount: number;
   size: number;
-  page: number;
+  hasMore: boolean;
 };
