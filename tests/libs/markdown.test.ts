@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { config } from '@/libs/config.js';
 import { writeMarkdown } from '@/libs/markdown.js';
 import { Record } from '@/types/records.types.js';
 
@@ -9,6 +10,10 @@ vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+}));
+
+vi.mock('@/libs/config.js', () => ({
+  config: { get: vi.fn() },
 }));
 
 const outputDirectory = '/mock/output';
@@ -24,6 +29,7 @@ describe('writeMarkdown', () => {
   beforeEach(() => {
     process.env.OUTPUT_DIRECTORY = outputDirectory;
     vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(config.get).mockReturnValue(undefined);
   });
 
   afterEach(() => {
@@ -31,14 +37,42 @@ describe('writeMarkdown', () => {
     vi.clearAllMocks();
   });
 
-  it('throws when OUTPUT_DIRECTORY is not set', () => {
+  it('throws when neither OUTPUT_DIRECTORY nor the persisted config value is set', () => {
     delete process.env.OUTPUT_DIRECTORY;
-    expect(() => writeMarkdown(mockRecord)).toThrow('Output directory is not set!');
+    expect(() => writeMarkdown(mockRecord)).toThrow(
+      'Output directory is not set!',
+    );
+  });
+
+  it('falls back to the persisted config value when OUTPUT_DIRECTORY is not set', () => {
+    delete process.env.OUTPUT_DIRECTORY;
+    vi.mocked(config.get).mockReturnValue(outputDirectory);
+
+    writeMarkdown(mockRecord);
+
+    expect(config.get).toHaveBeenCalledWith('outputDirectory');
+    expect(writeFileSync).toHaveBeenCalledWith(
+      join(outputDirectory, `${mockRecord.title}.md`),
+      mockRecord.content,
+    );
+  });
+
+  it('prefers OUTPUT_DIRECTORY over the persisted config value when both are set', () => {
+    vi.mocked(config.get).mockReturnValue('/other/output');
+
+    writeMarkdown(mockRecord);
+
+    expect(writeFileSync).toHaveBeenCalledWith(
+      join(outputDirectory, `${mockRecord.title}.md`),
+      mockRecord.content,
+    );
   });
 
   it('calls mkdirSync when the output directory does not exist', () => {
     writeMarkdown(mockRecord);
-    expect(mkdirSync).toHaveBeenCalledWith(outputDirectory, { recursive: true });
+    expect(mkdirSync).toHaveBeenCalledWith(outputDirectory, {
+      recursive: true,
+    });
   });
 
   it('does not call mkdirSync when the output directory already exists', () => {
