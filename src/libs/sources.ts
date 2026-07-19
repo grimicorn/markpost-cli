@@ -18,7 +18,13 @@ export const fetchSources = async (): Promise<Source[]> => {
     const body = (await response.json()) as ApiListResponse;
 
     if (!response.ok) {
-      throw new Error(formatErrorMessages([]));
+      // On error the server always responds with `{ data: { errors } }`
+      // regardless of endpoint, which doesn't match ApiListResponse's
+      // array-shaped `data`. Re-read the same body through the singular
+      // response shape so the real error detail is surfaced instead of a
+      // generic message.
+      const errorBody = body as unknown as ApiResponse;
+      throw new Error(formatErrorMessages(errorBody.data?.errors ?? []));
     }
 
     return (body.data ?? []).map(({ attributes }) => attributes) as Source[];

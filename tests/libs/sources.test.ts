@@ -60,9 +60,10 @@ describe('fetchSources', () => {
     expect(await fetchSources()).toEqual([mockSource]);
   });
 
-  it('returns [] when the response is not ok', async () => {
+  it('returns [] and surfaces error details when the response is not ok', async () => {
     mockFetch({ data: { errors: [{ title: 'Error', detail: 'Server error' }] } }, false);
     expect(await fetchSources()).toEqual([]);
+    expect(logErrorMessage).toHaveBeenCalledWith('fetchSources', 'Error: Server error');
   });
 
   it('returns [] on network failure', async () => {
