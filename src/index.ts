@@ -10,6 +10,7 @@ import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
 
 const [command, ...commandArgs] = process.argv.slice(2);
+const KNOWN_COMMANDS = ['push', 'get'];
 
 if (command === 'push') {
   await runPushCommand(commandArgs);
@@ -19,9 +20,15 @@ if (command === 'get') {
   await runGetCommand(commandArgs);
 }
 
-const isKnownCommand = command === 'push' || command === 'get';
+if (command && !KNOWN_COMMANDS.includes(command)) {
+  console.error(chalk.redBright(`Unknown command: ${command}`));
+  process.exitCode = 1;
+}
 
-if (!isKnownCommand) {
+// Only run the default fetch/write/delete sync when no subcommand was
+// given at all; an unrecognized subcommand must error out above instead
+// of silently falling through to a sync that deletes server records.
+if (!command) {
   await runDefaultSync();
 }
 
@@ -56,5 +63,6 @@ async function runDefaultSync(): Promise<void> {
   } catch (error) {
     spinner.error('Something went wrong!');
     console.error(chalk.redBright(error));
+    process.exitCode = 1;
   }
 }

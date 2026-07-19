@@ -27,11 +27,13 @@ describe('index', () => {
     vi.clearAllMocks();
     mockSpinner = { start: vi.fn(), success: vi.fn(), error: vi.fn() };
     process.argv = ['node', 'index.js'];
+    process.exitCode = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
     process.argv = originalArgv;
+    process.exitCode = undefined;
     vi.restoreAllMocks();
   });
 
@@ -59,6 +61,26 @@ describe('index', () => {
     expect(runGetCommand).toHaveBeenCalledWith(['abc-123']);
     expect(fetchAllRecords).not.toHaveBeenCalled();
     expect(yoctoSpinner).not.toHaveBeenCalled();
+  });
+
+  it('errors out on an unrecognized command instead of falling through to the default sync', async () => {
+    process.argv = ['node', 'index.js', 'puhs', 'file.md'];
+    const { runPushCommand } = await import('@/commands/push.js');
+    const { runGetCommand } = await import('@/commands/get.js');
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    await import('@/index.js');
+
+    expect(runPushCommand).not.toHaveBeenCalled();
+    expect(runGetCommand).not.toHaveBeenCalled();
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(yoctoSpinner).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown command: puhs'),
+    );
+    expect(process.exitCode).toBe(1);
   });
 
   it('fetches all records and writes each as markdown', async () => {
@@ -127,5 +149,6 @@ describe('index', () => {
 
     expect(mockSpinner.error).toHaveBeenCalled();
     expect(console.error).toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 });
