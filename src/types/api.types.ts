@@ -14,6 +14,11 @@ export type ApiData = {
   errors?: ApiError[];
 };
 
+export type ApiLinks = {
+  next: string | null;
+  prev?: string | null;
+};
+
 export type ApiResponse = {
   meta?: object;
   data?: ApiData;
@@ -21,5 +26,6 @@ export type ApiResponse = {
 
 export type ApiListResponse = {
   meta?: object;
+  links?: ApiLinks;
   data?: ApiData[];
 };
