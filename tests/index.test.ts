@@ -27,7 +27,6 @@ describe('index', () => {
     vi.clearAllMocks();
     mockSpinner = { start: vi.fn(), success: vi.fn(), error: vi.fn() };
     process.argv = ['node', 'index.js'];
-    vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -36,22 +35,30 @@ describe('index', () => {
     vi.restoreAllMocks();
   });
 
-  it('dispatches to runPushCommand and exits when the push command is given', async () => {
+  it('dispatches to runPushCommand and skips the default sync when the push command is given', async () => {
     process.argv = ['node', 'index.js', 'push', './notes/test.md'];
     const { runPushCommand } = await import('@/commands/push.js');
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
 
-    await expect(import('@/index.js')).rejects.toThrow('process.exit');
+    await import('@/index.js');
 
     expect(runPushCommand).toHaveBeenCalledWith(['./notes/test.md']);
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(yoctoSpinner).not.toHaveBeenCalled();
   });
 
-  it('dispatches to runGetCommand and exits when the get command is given', async () => {
+  it('dispatches to runGetCommand and skips the default sync when the get command is given', async () => {
     process.argv = ['node', 'index.js', 'get', 'abc-123'];
     const { runGetCommand } = await import('@/commands/get.js');
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
 
-    await expect(import('@/index.js')).rejects.toThrow('process.exit');
+    await import('@/index.js');
 
     expect(runGetCommand).toHaveBeenCalledWith(['abc-123']);
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(yoctoSpinner).not.toHaveBeenCalled();
   });
 
   it('fetches all records and writes each as markdown', async () => {

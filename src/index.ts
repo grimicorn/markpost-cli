@@ -13,40 +13,48 @@ const [command, ...commandArgs] = process.argv.slice(2);
 
 if (command === 'push') {
   await runPushCommand(commandArgs);
-  process.exit();
 }
 
 if (command === 'get') {
   await runGetCommand(commandArgs);
-  process.exit();
 }
 
-const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
+const isKnownCommand = command === 'push' || command === 'get';
 
-try {
-  await checkConfig();
+if (!isKnownCommand) {
+  await runDefaultSync();
+}
 
-  // Fetch records
-  spinner.start('Fetching records...');
-  const allRecords = await fetchAllRecords();
+// Default behavior when no subcommand is given: fetch all records, write
+// each to a markdown file, then delete them from the server.
+async function runDefaultSync(): Promise<void> {
+  const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
 
-  if (allRecords.length === 0) {
-    spinner.success('No new records, exiting...');
-    process.exit();
+  try {
+    await checkConfig();
+
+    // Fetch records
+    spinner.start('Fetching records...');
+    const allRecords = await fetchAllRecords();
+
+    if (allRecords.length === 0) {
+      spinner.success('No new records, exiting...');
+      return;
+    }
+
+    spinner.success(`Fetched ${allRecords.length} records!`);
+
+    // Write Records
+    spinner.start('Writing records...');
+    allRecords.forEach(writeMarkdown);
+    spinner.success(`Wrote ${allRecords.length} records!`);
+
+    // Delete Records
+    spinner.start('Deleting records...');
+    await deleteRecords(allRecords.map(({ uuid }) => uuid));
+    spinner.success(`Wrote ${allRecords.length} records!`);
+  } catch (error) {
+    spinner.error('Something went wrong!');
+    console.error(chalk.redBright(error));
   }
-
-  spinner.success(`Fetched ${allRecords.length} records!`);
-
-  // Write Records
-  spinner.start('Writing records...');
-  allRecords.forEach(writeMarkdown);
-  spinner.success(`Wrote ${allRecords.length} records!`);
-
-  // Delete Records
-  spinner.start('Deleting records...');
-  await deleteRecords(allRecords.map(({ uuid }) => uuid));
-  spinner.success(`Wrote ${allRecords.length} records!`);
-} catch (error) {
-  spinner.error('Something went wrong!');
-  console.error(chalk.redBright(error));
 }
