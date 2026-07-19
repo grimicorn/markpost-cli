@@ -1,4 +1,4 @@
-import { formatErrorMessages, getApiToken, getBaseUrl } from '@/libs/api.js';
+import { assertApiSuccess, getApiToken, getBaseUrl } from '@/libs/api.js';
 import { logErrorMessage } from '@/libs/errors.js';
 import {
   ApiDeleteMeta,
@@ -53,9 +53,7 @@ export const fetchPaginatedRecords = async (
 
     const body = (await response.json()) as ApiListResponse;
 
-    if (!response.ok) {
-      throw new Error(formatErrorMessages([]));
-    }
+    assertApiSuccess(response, body);
 
     return {
       records: body.data?.map(({ attributes }) => attributes) as Record[],
@@ -94,9 +92,7 @@ export const createRecord = async (
     });
 
     const body = (await response.json()) as ApiResponse;
-    if (!response.ok || body.data?.errors) {
-      throw new Error(formatErrorMessages(body.data?.errors ?? []));
-    }
+    assertApiSuccess(response, body);
 
     return body.data?.attributes ? (body.data?.attributes as Record) : null;
   } catch (error) {
@@ -119,9 +115,7 @@ export const fetchRecord = async (uuid: string): Promise<Record | null> => {
 
     const body = (await response.json()) as ApiResponse;
 
-    if (!response.ok || body.data?.errors) {
-      throw new Error(formatErrorMessages(body.data?.errors ?? []));
-    }
+    assertApiSuccess(response, body);
 
     return body.data?.attributes ? (body.data?.attributes as Record) : null;
   } catch (error) {
@@ -155,9 +149,7 @@ export const deleteRecords = async (
     });
 
     const body = (await response.json()) as ApiResponse;
-    if (!response.ok || body.data?.errors) {
-      throw new Error(formatErrorMessages(body.data?.errors ?? []));
-    }
+    assertApiSuccess(response, body);
 
     return body.meta ? (body.meta as ApiDeleteMeta) : null;
   } catch (error) {
