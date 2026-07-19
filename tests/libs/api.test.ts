@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatErrorMessages, getApiToken, getBaseUrl } from '@/libs/api.js';
+import {
+  assertApiSuccess,
+  formatErrorMessages,
+  getApiToken,
+  getBaseUrl,
+} from '@/libs/api.js';
 import { ApiError } from '@/types/api.types.js';
 
 vi.mock('@/libs/config.js', () => ({
@@ -68,6 +73,51 @@ describe('formatErrorMessages', () => {
     ];
     expect(formatErrorMessages(errors)).toBe(
       '- Bad Request: Invalid input\n- Unprocessable: Missing field',
+    );
+  });
+});
+
+describe('assertApiSuccess', () => {
+  const error = (title: string, detail: string): ApiError => ({
+    status: '400',
+    title,
+    detail,
+    source: {},
+  });
+
+  it('does not throw when the response is ok and carries no errors', () => {
+    expect(() =>
+      assertApiSuccess({ ok: true } as Response, { data: {} }),
+    ).not.toThrow();
+  });
+
+  it('does not throw when the response is ok and errors is a present but empty array', () => {
+    expect(() =>
+      assertApiSuccess({ ok: true } as Response, { data: { errors: [] } }),
+    ).not.toThrow();
+  });
+
+  it('throws with the real error detail when the body carries errors', () => {
+    const body = {
+      data: { errors: [error('Unauthorized', 'Invalid or missing token')] },
+    };
+
+    expect(() => assertApiSuccess({ ok: false } as Response, body)).toThrow(
+      'Unauthorized: Invalid or missing token',
+    );
+  });
+
+  it('throws "Unknown error occurred" when the response fails with no error body', () => {
+    expect(() =>
+      assertApiSuccess({ ok: false } as Response, undefined),
+    ).toThrow('Unknown error occurred');
+  });
+
+  it('throws when the response is ok but the body still carries errors', () => {
+    const body = { data: { errors: [error('Conflict', 'Duplicate record')] } };
+
+    expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
+      'Conflict: Duplicate record',
     );
   });
 });

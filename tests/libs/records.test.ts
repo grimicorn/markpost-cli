@@ -10,13 +10,20 @@ import {
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Record } from '@/types/records.types.js';
 
-vi.mock('@/libs/api.js', () => ({
-  getBaseUrl: () => 'https://example.com',
-  getApiToken: () => 'test-token',
-  logErrorMessage: vi.fn(),
-  formatErrorMessages: (errors: { title: string; detail: string }[]) =>
-    errors.map((e) => `${e.title}: ${e.detail}`).join('\n'),
-}));
+// Only override the external-service seams (base URL, token). Everything
+// else — formatErrorMessages, assertApiSuccess — stays real so these tests
+// exercise production error-parsing logic instead of a hand-copied stand-in
+// that could silently drift from it.
+vi.mock('@/libs/api.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/libs/api.js')>('@/libs/api.js');
+
+  return {
+    ...actual,
+    getBaseUrl: () => 'https://example.com',
+    getApiToken: () => 'test-token',
+  };
+});
 
 const mockRecord: Record = {
   uuid: 'abc-123',
@@ -383,8 +390,10 @@ describe('fetchAllRecords', () => {
 });
 
 describe('fetchPaginatedRecords', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('calls fetch with page[size] only when no cursor is given', async () => {
@@ -437,6 +446,25 @@ describe('fetchPaginatedRecords', () => {
       false,
     );
     expect(await fetchPaginatedRecords()).toBeNull();
+  });
+
+  it('surfaces the API error detail instead of "Unknown error occurred"', async () => {
+    mockFetch(
+      {
+        data: {
+          errors: [{ title: 'Unauthorized', detail: 'Invalid API token' }],
+        },
+      },
+      false,
+    );
+
+    expect(await fetchPaginatedRecords()).toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Unauthorized: Invalid API token'),
+    );
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('Unknown error occurred'),
+    );
   });
 
   it('returns null on network failure', async () => {
