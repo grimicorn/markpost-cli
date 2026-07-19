@@ -1,14 +1,15 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { writeMarkdown } from '@/libs/markdown.js';
+import { readMarkdown, writeMarkdown } from '@/libs/markdown.js';
 import { Record } from '@/types/records.types.js';
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
+  readFileSync: vi.fn(),
 }));
 
 const outputDirectory = '/mock/output';
@@ -53,5 +54,40 @@ describe('writeMarkdown', () => {
       join(outputDirectory, `${mockRecord.title}.md`),
       mockRecord.content,
     );
+  });
+});
+
+describe('readMarkdown', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('throws when the file does not exist', () => {
+    vi.mocked(existsSync).mockReturnValue(false);
+    expect(() => readMarkdown('./notes/missing.md')).toThrow(
+      'File not found: ./notes/missing.md',
+    );
+  });
+
+  it('derives the title from the filename without its extension', () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(mockRecord.content);
+
+    const result = readMarkdown('./notes/Test Title.md');
+
+    expect(result.title).toBe('Test Title');
+  });
+
+  it('reads the file content as utf-8', () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(mockRecord.content);
+
+    const result = readMarkdown('./notes/Test Title.md');
+
+    expect(readFileSync).toHaveBeenCalledWith(
+      './notes/Test Title.md',
+      'utf-8',
+    );
+    expect(result.content).toBe(mockRecord.content);
   });
 });

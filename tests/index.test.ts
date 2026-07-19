@@ -5,6 +5,8 @@ import { Record } from '@/types/records.types.js';
 vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
+vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
+vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
 vi.mock('chalk', () => ({ default: { redBright: vi.fn((s: unknown) => s) } }));
@@ -18,17 +20,38 @@ const mockRecord: Record = {
 
 describe('index', () => {
   let mockSpinner: { start: ReturnType<typeof vi.fn>; success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
+  const originalArgv = process.argv;
 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
     mockSpinner = { start: vi.fn(), success: vi.fn(), error: vi.fn() };
+    process.argv = ['node', 'index.js'];
     vi.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    process.argv = originalArgv;
     vi.restoreAllMocks();
+  });
+
+  it('dispatches to runPushCommand and exits when the push command is given', async () => {
+    process.argv = ['node', 'index.js', 'push', './notes/test.md'];
+    const { runPushCommand } = await import('@/commands/push.js');
+
+    await expect(import('@/index.js')).rejects.toThrow('process.exit');
+
+    expect(runPushCommand).toHaveBeenCalledWith(['./notes/test.md']);
+  });
+
+  it('dispatches to runGetCommand and exits when the get command is given', async () => {
+    process.argv = ['node', 'index.js', 'get', 'abc-123'];
+    const { runGetCommand } = await import('@/commands/get.js');
+
+    await expect(import('@/index.js')).rejects.toThrow('process.exit');
+
+    expect(runGetCommand).toHaveBeenCalledWith(['abc-123']);
   });
 
   it('fetches all records and writes each as markdown', async () => {

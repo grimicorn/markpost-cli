@@ -1,5 +1,5 @@
-import { writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { basename, extname, join } from 'node:path';
 import { Record } from '@/types/records.types.js';
 
 const getOutputDirectory = () => {
@@ -18,4 +18,19 @@ export const writeMarkdown = (record: Record) => {
   }
 
   writeFileSync(join(outputDirectory, `${record.title}.md`), record.content);
+};
+
+// Inverse of writeMarkdown: the title comes from the filename (no extension),
+// mirroring how writeMarkdown names the file after the record's title.
+export const readMarkdown = (
+  filePath: string,
+): Pick<Record, 'title' | 'content'> => {
+  if (!existsSync(filePath)) {
+    throw Error(`File not found: ${filePath}`);
+  }
+
+  return {
+    title: basename(filePath, extname(filePath)),
+    content: readFileSync(filePath, 'utf-8'),
+  };
 };

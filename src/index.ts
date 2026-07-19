@@ -2,10 +2,24 @@
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
+import { runPushCommand } from '@/commands/push.js';
+import { runGetCommand } from '@/commands/get.js';
 import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
+
+const [command, ...commandArgs] = process.argv.slice(2);
+
+if (command === 'push') {
+  await runPushCommand(commandArgs);
+  process.exit();
+}
+
+if (command === 'get') {
+  await runGetCommand(commandArgs);
+  process.exit();
+}
 
 const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
 
