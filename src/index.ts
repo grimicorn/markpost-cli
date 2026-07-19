@@ -4,13 +4,14 @@ import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
 import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
+import { runSourcesCommand } from '@/commands/sources.js';
 import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
 
 const [command, ...commandArgs] = process.argv.slice(2);
-const KNOWN_COMMANDS = ['push', 'get'];
+const KNOWN_COMMANDS = ['push', 'get', 'sources'];
 
 if (command === 'push') {
   await runPushCommand(commandArgs);
@@ -18,6 +19,10 @@ if (command === 'push') {
 
 if (command === 'get') {
   await runGetCommand(commandArgs);
+}
+
+if (command === 'sources') {
+  await runSourcesCommand(commandArgs);
 }
 
 if (command && !KNOWN_COMMANDS.includes(command)) {

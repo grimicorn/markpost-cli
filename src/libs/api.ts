@@ -22,3 +22,16 @@ export const formatErrorMessages = (errors: ApiError[]) => {
 
   return 'Unknown error occurred';
 };
+
+// Every error response the API sends back is a non-2xx status carrying
+// `data.errors`, regardless of whether the success shape is a single
+// resource or a list. Accept `unknown` so this works for both response
+// shapes without callers needing to reshape their body first.
+export const assertApiSuccess = (response: Response, body: unknown): void => {
+  const errors = (body as { data?: { errors?: ApiError[] } })?.data?.errors;
+  const hasErrors = Boolean(errors && errors.length > 0);
+
+  if (!response.ok || hasErrors) {
+    throw new Error(formatErrorMessages(errors ?? []));
+  }
+};
