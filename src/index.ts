@@ -2,37 +2,44 @@
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
+import { runSourcesCommand } from '@/commands/sources.js';
 import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
 
-const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
+const [command, ...commandArgs] = process.argv.slice(2);
 
-try {
-  await checkConfig();
+if (command === 'sources') {
+  await runSourcesCommand(commandArgs);
+} else {
+  const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
 
-  // Fetch records
-  spinner.start('Fetching records...');
-  const allRecords = await fetchAllRecords();
+  try {
+    await checkConfig();
 
-  if (allRecords.length === 0) {
-    spinner.success('No new records, exiting...');
-    process.exit();
+    // Fetch records
+    spinner.start('Fetching records...');
+    const allRecords = await fetchAllRecords();
+
+    if (allRecords.length === 0) {
+      spinner.success('No new records, exiting...');
+      process.exit();
+    }
+
+    spinner.success(`Fetched ${allRecords.length} records!`);
+
+    // Write Records
+    spinner.start('Writing records...');
+    allRecords.forEach(writeMarkdown);
+    spinner.success(`Wrote ${allRecords.length} records!`);
+
+    // Delete Records
+    spinner.start('Deleting records...');
+    await deleteRecords(allRecords.map(({ uuid }) => uuid));
+    spinner.success(`Wrote ${allRecords.length} records!`);
+  } catch (error) {
+    spinner.error('Something went wrong!');
+    console.error(chalk.redBright(error));
   }
-
-  spinner.success(`Fetched ${allRecords.length} records!`);
-
-  // Write Records
-  spinner.start('Writing records...');
-  allRecords.forEach(writeMarkdown);
-  spinner.success(`Wrote ${allRecords.length} records!`);
-
-  // Delete Records
-  spinner.start('Deleting records...');
-  await deleteRecords(allRecords.map(({ uuid }) => uuid));
-  spinner.success(`Wrote ${allRecords.length} records!`);
-} catch (error) {
-  spinner.error('Something went wrong!');
-  console.error(chalk.redBright(error));
 }
