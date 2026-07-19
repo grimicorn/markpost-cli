@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
 import { createSource, deleteSource, fetchSources } from '@/libs/sources.js';
 import { checkConfig } from '@/libs/config.js';
-import { Source, SOURCE_TYPES } from '@/types/sources.types.js';
+import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 
 // Mirror the endpoint constants markpost's web app uses in
 // app/composables/useSources.ts so the CLI shows the same URL a user would
@@ -17,7 +17,7 @@ const USAGE = `Usage: markpost sources <list|create|delete> [uuid]
   delete [uuid]  Delete a source; prompts to pick one if uuid is omitted`;
 
 export const buildEndpointUrl = (
-  sourceType: string,
+  sourceType: SourceType,
   endpointSlug: string,
 ): string => {
   if (sourceType === 'email') {

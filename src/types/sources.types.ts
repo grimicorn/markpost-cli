@@ -13,7 +13,7 @@ export type SourceType = (typeof SOURCE_TYPES)[number];
 export type Source = {
   uuid: string;
   createdAt: string;
-  type: string;
+  type: SourceType;
   name: string;
   provider: string | null;
   endpointSlug: string;
@@ -23,7 +23,7 @@ export type Source = {
 };
 
 export type CreateSourceInput = {
-  type: string;
+  type: SourceType;
   name: string;
   routeFolder: string;
   provider?: string;
