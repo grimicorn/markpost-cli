@@ -5,6 +5,7 @@ import { Record } from '@/types/records.types.js';
 vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
+vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
 vi.mock('chalk', () => ({ default: { redBright: vi.fn((s: unknown) => s) } }));
@@ -18,6 +19,7 @@ const mockRecord: Record = {
 
 describe('index', () => {
   let mockSpinner: { start: ReturnType<typeof vi.fn>; success: ReturnType<typeof vi.fn>; error: ReturnType<typeof vi.fn> };
+  const originalArgv = process.argv;
 
   beforeEach(() => {
     vi.resetModules();
@@ -29,6 +31,21 @@ describe('index', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.argv = originalArgv;
+  });
+
+  it('dispatches to runSourcesCommand and skips the sync flow when the "sources" command is given', async () => {
+    process.argv = [...originalArgv.slice(0, 2), 'sources', 'list'];
+    const { runSourcesCommand } = await import('@/commands/sources.js');
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+
+    await import('@/index.js');
+
+    expect(runSourcesCommand).toHaveBeenCalledWith(['list']);
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(mockSpinner.start).not.toHaveBeenCalled();
   });
 
   it('fetches all records and writes each as markdown', async () => {
