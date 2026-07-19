@@ -83,6 +83,7 @@ describe('index', () => {
     process.argv = ['node', 'index.js', 'puhs', 'file.md'];
     const { runPushCommand } = await import('@/commands/push.js');
     const { runGetCommand } = await import('@/commands/get.js');
+    const { runSourcesCommand } = await import('@/commands/sources.js');
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
@@ -90,6 +91,7 @@ describe('index', () => {
 
     expect(runPushCommand).not.toHaveBeenCalled();
     expect(runGetCommand).not.toHaveBeenCalled();
+    expect(runSourcesCommand).not.toHaveBeenCalled();
     expect(fetchAllRecords).not.toHaveBeenCalled();
     expect(deleteRecords).not.toHaveBeenCalled();
     expect(yoctoSpinner).not.toHaveBeenCalled();
