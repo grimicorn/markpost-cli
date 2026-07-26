@@ -126,6 +126,19 @@ describe('checkConfig', () => {
       expect(input).not.toHaveBeenCalled();
     });
 
+    it('still prompts for apiToken when OUTPUT_DIRECTORY comes from env and token is unset', async () => {
+      mockGet.mockReturnValue(undefined);
+      process.env.OUTPUT_DIRECTORY = '/env/dir';
+      vi.mocked(input).mockResolvedValue('my-token');
+
+      await checkConfig();
+
+      expect(input).toHaveBeenCalledTimes(1);
+      expect(input).toHaveBeenCalledWith({ message: 'Sync API Token' });
+      expect(mockSet).toHaveBeenCalledWith('apiToken', 'my-token');
+      expect(mockSet).toHaveBeenCalledWith('outputDirectory', '/env/dir');
+    });
+
     it('prompts and sets directory when not in env or config', async () => {
       vi.mocked(input).mockResolvedValue('/my/dir');
       await checkConfig();
