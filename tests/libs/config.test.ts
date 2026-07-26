@@ -72,6 +72,17 @@ describe('checkConfig', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it('prompts for both values in order when neither is set', async () => {
+    mockGet.mockReturnValue(undefined);
+    vi.mocked(input).mockResolvedValueOnce('my-token').mockResolvedValueOnce('/my/dir');
+
+    await checkConfig();
+
+    expect(input).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(input).mock.calls[0][0]).toEqual({ message: 'Sync API Token' });
+    expect(vi.mocked(input).mock.calls[1][0]).toEqual({ message: 'Output Directory' });
+  });
+
   describe('apiToken', () => {
     beforeEach(() => {
       mockGet.mockImplementation((key: string) =>
