@@ -1,10 +1,41 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import slugify from '@sindresorhus/slugify';
 
 import { config } from '@/libs/config.js';
-import { readMarkdown, writeMarkdown } from '@/libs/markdown.js';
+import {
+  MAX_COLLISION_SUFFIX,
+  readMarkdown,
+  writeMarkdown,
+} from '@/libs/markdown.js';
 import { Record } from '@/types/records.types.js';
+
+const EXCLUSIVE_WRITE_OPTIONS = { flag: 'wx' };
+
+const createFileAlreadyExistsError = (): NodeJS.ErrnoException => {
+  const error = new Error('EEXIST') as NodeJS.ErrnoException;
+  error.code = 'EEXIST';
+  return error;
+};
+
+// Simulates writeFileSync's exclusive-create ('wx') behavior against a set
+// of paths that are already "on disk": rejects with EEXIST for any path in
+// takenPaths, otherwise succeeds and adds the path so later attempts against
+// the same path also collide.
+const mockWriteFileSyncRejectingExistingPaths = (
+  existingPaths: Iterable<string> = [],
+): void => {
+  const takenPaths = new Set(existingPaths);
+
+  vi.mocked(writeFileSync).mockImplementation((path) => {
+    if (takenPaths.has(path as string)) {
+      throw createFileAlreadyExistsError();
+    }
+
+    takenPaths.add(path as string);
+  });
+};
 
 vi.mock('node:fs', () => ({
   existsSync: vi.fn(),
@@ -16,6 +47,27 @@ vi.mock('node:fs', () => ({
 vi.mock('@/libs/config.js', () => ({
   config: { get: vi.fn() },
 }));
+
+// Spy on the real slugify implementation so most tests exercise real
+// sanitization end-to-end, while a couple of tests below can override its
+// return value to prove the independent path-containment guard in
+// markdown.ts does not simply rely on slugify behaving itself.
+vi.mock('@sindresorhus/slugify', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@sindresorhus/slugify')>();
+  return {
+    ...actual,
+    default: vi.fn(actual.default),
+  };
+});
+
+// Captured once so beforeEach can restore the real behavior explicitly.
+// mockReturnValueOnce queues are self-draining, but relying on every test
+// to consume its own override is fragile; restoring a known-good default
+// every time removes that assumption entirely.
+const { default: actualSlugify } = await vi.importActual<
+  typeof import('@sindresorhus/slugify')
+>('@sindresorhus/slugify');
 
 const outputDirectory = '/mock/output';
 
@@ -30,6 +82,13 @@ describe('writeMarkdown', () => {
   beforeEach(() => {
     process.env.OUTPUT_DIRECTORY = outputDirectory;
     vi.mocked(existsSync).mockReturnValue(false);
+    // Reset rather than just clear call history: a couple of tests below
+    // install a custom writeFileSync implementation to simulate on-disk
+    // state, and clearAllMocks alone does not remove that implementation,
+    // so it would otherwise leak into later tests. Same reasoning for
+    // restoring slugify's real implementation here.
+    vi.mocked(writeFileSync).mockReset();
+    vi.mocked(slugify).mockImplementation(actualSlugify);
     vi.mocked(config.get).mockReturnValue(undefined);
   });
 
@@ -53,8 +112,9 @@ describe('writeMarkdown', () => {
 
     expect(config.get).toHaveBeenCalledWith('outputDirectory');
     expect(writeFileSync).toHaveBeenCalledWith(
-      join(outputDirectory, `${mockRecord.title}.md`),
+      resolve(outputDirectory, 'test-title.md'),
       mockRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
     );
   });
 
@@ -64,8 +124,9 @@ describe('writeMarkdown', () => {
     writeMarkdown(mockRecord);
 
     expect(writeFileSync).toHaveBeenCalledWith(
-      join(outputDirectory, `${mockRecord.title}.md`),
+      resolve(outputDirectory, 'test-title.md'),
       mockRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
     );
   });
 
@@ -82,12 +143,147 @@ describe('writeMarkdown', () => {
     expect(mkdirSync).not.toHaveBeenCalled();
   });
 
-  it('calls writeFileSync with the correct file path and content', () => {
+  it('calls writeFileSync with a slugified file path and the original content', () => {
     writeMarkdown(mockRecord);
     expect(writeFileSync).toHaveBeenCalledWith(
-      join(outputDirectory, `${mockRecord.title}.md`),
+      resolve(outputDirectory, 'test-title.md'),
       mockRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
     );
+  });
+
+  it('returns the resolved path it wrote to', () => {
+    const writtenPath = writeMarkdown(mockRecord);
+    expect(writtenPath).toBe(resolve(outputDirectory, 'test-title.md'));
+  });
+
+  it('keeps the write inside outputDirectory when the title contains path separators', () => {
+    const maliciousRecord: Record = {
+      ...mockRecord,
+      title: '../../etc/passwd',
+    };
+
+    writeMarkdown(maliciousRecord);
+
+    const [writtenPath] = vi.mocked(writeFileSync).mock.calls[0];
+    expect(writtenPath).toBe(resolve(outputDirectory, 'etc-passwd.md'));
+    expect(
+      (writtenPath as string).startsWith(resolve(outputDirectory) + sep),
+    ).toBe(true);
+  });
+
+  it('falls back to the record uuid when the title slugifies to an empty string', () => {
+    const symbolOnlyRecord: Record = { ...mockRecord, title: '***' };
+
+    writeMarkdown(symbolOnlyRecord);
+
+    expect(writeFileSync).toHaveBeenCalledWith(
+      resolve(outputDirectory, `${symbolOnlyRecord.uuid}.md`),
+      symbolOnlyRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
+    );
+  });
+
+  it('falls back to "untitled" when both the title and the uuid slugify to an empty string', () => {
+    const emptySlugRecord: Record = { ...mockRecord, title: '***', uuid: '///' };
+
+    writeMarkdown(emptySlugRecord);
+
+    expect(writeFileSync).toHaveBeenCalledWith(
+      resolve(outputDirectory, 'untitled.md'),
+      emptySlugRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
+    );
+  });
+
+  it('throws instead of writing outside outputDirectory even if slugify returns an unsafe value', () => {
+    // slugify is expected to strip path separators and `..` segments, but
+    // resolveWithinOutputDirectory is a second, independent guard and must
+    // not rely on slugify behaving correctly. Force it to misbehave here.
+    vi.mocked(slugify).mockReturnValueOnce('../escaped');
+
+    expect(() => writeMarkdown(mockRecord)).toThrow(
+      'Refusing to write outside output directory',
+    );
+    expect(writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('writes both records to separate files when their titles collide', () => {
+    mockWriteFileSyncRejectingExistingPaths();
+
+    const firstRecord: Record = {
+      ...mockRecord,
+      uuid: 'first',
+      title: 'Test Title',
+    };
+    const secondRecord: Record = {
+      ...mockRecord,
+      uuid: 'second',
+      title: 'Test Title',
+    };
+
+    const firstWrittenPath = writeMarkdown(firstRecord);
+    const secondWrittenPath = writeMarkdown(secondRecord);
+
+    // The second write collides on its first attempt (same slug, same
+    // path already taken by the first write) and retries with a suffix,
+    // so writeFileSync is called with the base path twice: once for the
+    // first record's successful write, once for the second record's
+    // failed attempt before it falls through to the suffixed path.
+    expect(firstWrittenPath).toBe(resolve(outputDirectory, 'test-title.md'));
+    expect(secondWrittenPath).toBe(
+      resolve(outputDirectory, 'test-title-2.md'),
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      resolve(outputDirectory, 'test-title.md'),
+      firstRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      resolve(outputDirectory, 'test-title-2.md'),
+      secondRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
+    );
+  });
+
+  it('keeps incrementing the suffix past the first collision', () => {
+    mockWriteFileSyncRejectingExistingPaths([
+      resolve(outputDirectory, 'test-title.md'),
+      resolve(outputDirectory, 'test-title-2.md'),
+    ]);
+
+    writeMarkdown(mockRecord);
+
+    expect(writeFileSync).toHaveBeenCalledWith(
+      resolve(outputDirectory, 'test-title-3.md'),
+      mockRecord.content,
+      EXCLUSIVE_WRITE_OPTIONS,
+    );
+  });
+
+  it('gives up instead of looping forever once every slug variant is taken', () => {
+    vi.mocked(writeFileSync).mockImplementation(() => {
+      throw createFileAlreadyExistsError();
+    });
+
+    expect(() => writeMarkdown(mockRecord)).toThrow(
+      'Too many filename collisions for "test-title"',
+    );
+    expect(vi.mocked(writeFileSync).mock.calls.length).toBeGreaterThan(1);
+    expect(vi.mocked(writeFileSync).mock.calls.length).toBeLessThanOrEqual(
+      MAX_COLLISION_SUFFIX,
+    );
+  });
+
+  it('rethrows a non-collision error from writeFileSync instead of retrying', () => {
+    const permissionError = new Error('EACCES') as NodeJS.ErrnoException;
+    permissionError.code = 'EACCES';
+    vi.mocked(writeFileSync).mockImplementation(() => {
+      throw permissionError;
+    });
+
+    expect(() => writeMarkdown(mockRecord)).toThrow(permissionError);
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
   });
 });
 

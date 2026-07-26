@@ -58,8 +58,11 @@ async function runDefaultSync(): Promise<void> {
 
     // Write Records
     spinner.start('Writing records...');
-    allRecords.forEach(writeMarkdown);
+    const writtenFilePaths = allRecords.map(writeMarkdown);
     spinner.success(`Wrote ${allRecords.length} records!`);
+    writtenFilePaths.forEach((filePath) => {
+      console.log(chalk.dim(`  -> ${filePath}`));
+    });
 
     // Delete Records
     spinner.start('Deleting records...');
