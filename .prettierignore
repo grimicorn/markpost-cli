@@ -1,2 +1,5 @@
 dist
 node_modules
+# Vendored verbatim from markpost; re-synced by scripts/sync-contract.mjs,
+# not hand-edited, so it shouldn't be reformatted to this repo's style.
+src/types/vendor

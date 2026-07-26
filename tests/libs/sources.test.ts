@@ -82,6 +82,24 @@ describe('fetchSources', () => {
     expect(await fetchSources()).toEqual([mockSource]);
   });
 
+  // Regression coverage for #29: authedSourcesRequest previously only
+  // checked `!response.ok`, so a 200 whose body still carried `errors`
+  // (e.g. `data.errors`) was treated as success everywhere in this file —
+  // the same class of error-swallowing bug the CLI's records path had
+  // already been fixed for (see tests/libs/records.test.ts). It now
+  // delegates to `assertApiSuccess`, which checks both.
+  it('returns [] and surfaces error details when the response is ok but carries errors', async () => {
+    mockFetch(
+      { data: { errors: [{ title: 'Error', detail: 'Server error' }] } },
+      true,
+    );
+    expect(await fetchSources()).toEqual([]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'fetchSources',
+      'Error: Server error',
+    );
+  });
+
   it('returns [] and surfaces error details when the response is not ok', async () => {
     mockFetch({ data: { errors: [{ title: 'Error', detail: 'Server error' }] } }, false);
     expect(await fetchSources()).toEqual([]);

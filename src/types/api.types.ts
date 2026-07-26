@@ -3,9 +3,16 @@
 // hand-mirrored, so the CLI can't silently drift from what the server
 // actually sends. Run `npm run sync:contract` to refresh the vendored copy;
 // see README.md#contract-sync.
+//
+// `ApiRequest` is deliberately NOT re-exported here: the CLI doesn't yet
+// type its own request bodies (they're built as untyped literals in
+// records.ts/sources.ts), and markpost's `ApiRequest` doesn't model the
+// `data.type` discriminator every request the CLI actually sends includes.
+// Wiring it in would mean inventing a CLI-side type that diverges from the
+// vendored contract to route around that gap — exactly what this change is
+// trying to avoid. Left as follow-up work; see the PR description.
 export type {
   ApiError,
-  ApiRequest,
   ApiResourceObject,
   ApiResponse,
 } from '@/types/vendor/markpost-api.types.js';
@@ -25,7 +32,7 @@ export type ApiDeleteMeta = {
 };
 
 export type ApiDeleteResponse = {
-  meta: ApiDeleteMeta;
+  meta?: ApiDeleteMeta;
 };
 
 // The real error envelope markpost endpoints send on failure. `data.errors`

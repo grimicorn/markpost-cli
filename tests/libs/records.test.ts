@@ -440,6 +440,15 @@ describe('fetchPaginatedRecords', () => {
     });
   });
 
+  it('defaults meta to a stop-pagination-safe value when omitted', async () => {
+    mockFetch({ data: [{ attributes: mockRecord }] });
+    expect(await fetchPaginatedRecords()).toEqual({
+      records: [mockRecord],
+      meta: { total: 1, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+  });
+
   it('returns null when the response contains errors', async () => {
     mockFetch(
       { data: { errors: [{ title: 'Error', detail: 'Server error' }] } },

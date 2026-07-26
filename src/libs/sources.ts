@@ -1,15 +1,11 @@
 import {
-  formatErrorMessages,
+  assertApiSuccess,
   getApiToken,
   getBaseUrl,
   unwrapResourceAttributes,
 } from '@/libs/api.js';
 import { logErrorMessage } from '@/libs/errors.js';
-import {
-  ApiDeleteMeta,
-  ApiDeleteResponse,
-  ApiErrorEnvelope,
-} from '@/types/api.types.js';
+import { ApiDeleteMeta, ApiDeleteResponse } from '@/types/api.types.js';
 import {
   CreateSourceInput,
   Source,
@@ -18,9 +14,10 @@ import {
 } from '@/types/sources.types.js';
 
 // Single seam for talking to the sources API: attaches auth, throws with
-// the server's real error detail on failure, otherwise returns the parsed
-// body for the caller to read in whatever shape (list, single, meta) it
-// expects.
+// the server's real error detail on failure (via `assertApiSuccess`, so a
+// 2xx response that still carries `errors` is caught here too, not just a
+// non-2xx status), otherwise returns the parsed body for the caller to read
+// in whatever shape (list, single, meta) it expects.
 const authedSourcesRequest = async (
   path: string,
   init: RequestInit = {},
@@ -35,11 +32,7 @@ const authedSourcesRequest = async (
 
   const body = await response.json();
 
-  if (!response.ok) {
-    const errorBody = body as ApiErrorEnvelope;
-    const errors = errorBody.data?.errors ?? errorBody.errors;
-    throw new Error(formatErrorMessages(errors ?? []));
-  }
+  assertApiSuccess(response, body);
 
   return body;
 };

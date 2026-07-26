@@ -172,4 +172,12 @@ describe('unwrapResourceAttributes', () => {
 
     expect(unwrapResourceAttributes(body)).toBeNull();
   });
+
+  it('returns null (not undefined) when the resource has no attributes', () => {
+    const body = {
+      data: { type: 'fixtures', id: 'abc-123' },
+    } as ApiResponse<FixtureResource | null>;
+
+    expect(unwrapResourceAttributes(body)).toBeNull();
+  });
 });

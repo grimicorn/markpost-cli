@@ -16,6 +16,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -59,21 +60,38 @@ function parseFromPathArg(argv) {
 
   const fromPath = argv[fromFlagIndex + 1];
 
-  if (!fromPath) {
+  if (!fromPath || fromPath.startsWith('--')) {
     throw new Error('--from requires a path to a local markpost checkout');
+  }
+
+  if (!existsSync(fromPath)) {
+    throw new Error(`--from path does not exist: ${fromPath}`);
   }
 
   return fromPath;
 }
 
-function cloneMarkpostShallow() {
-  const cloneDir = mkdtempSync(join(tmpdir(), 'markpost-contract-sync-'));
-
+function cloneMarkpostInto(cloneDir) {
   execFileSync('git', ['clone', '--depth', '1', MARKPOST_REPO_URL, cloneDir], {
     stdio: 'inherit',
   });
+}
 
-  return cloneDir;
+function assertContractIsCommitted(checkoutDir) {
+  const status = execFileSync(
+    'git',
+    ['status', '--porcelain', '--', CONTRACT_RELATIVE_PATH],
+    { cwd: checkoutDir, encoding: 'utf-8' },
+  ).trim();
+
+  if (!status) {
+    return;
+  }
+
+  throw new Error(
+    `${CONTRACT_RELATIVE_PATH} has uncommitted changes in ${checkoutDir} — ` +
+      'commit them first so manifest.json records the commit the vendored file actually came from',
+  );
 }
 
 function readCommitHash(checkoutDir) {
@@ -96,6 +114,7 @@ function readContractSource(checkoutDir) {
 }
 
 function writeVendoredContract(contractSource) {
+  mkdirSync(VENDOR_DIR, { recursive: true });
   writeFileSync(VENDOR_FILE, `${VENDOR_FILE_HEADER}${contractSource}`);
 }
 
@@ -107,28 +126,48 @@ function writeManifest(sourceCommit) {
     syncedAt: new Date().toISOString(),
   };
 
+  mkdirSync(VENDOR_DIR, { recursive: true });
   writeFileSync(MANIFEST_FILE, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
-// Resolves everything that can fail (missing contract file, `git rev-parse`)
-// before writing anything, so a mid-sync failure can't leave the vendored
-// file and the manifest's `sourceCommit` out of sync with each other.
+// Resolves everything that can fail (missing contract file, uncommitted
+// changes to it, `git rev-parse`) before writing anything, so a mid-sync
+// failure can't leave the vendored file and the manifest's `sourceCommit`
+// out of sync with each other, or a claimed provenance the checkout doesn't
+// actually match.
+function syncFrom(checkoutDir) {
+  assertContractIsCommitted(checkoutDir);
+
+  const contractSource = readContractSource(checkoutDir);
+  const sourceCommit = readCommitHash(checkoutDir);
+
+  writeVendoredContract(contractSource);
+  writeManifest(sourceCommit);
+}
+
 function main() {
   const fromPath = parseFromPathArg(process.argv.slice(2));
-  const isTemporaryClone = !fromPath;
-  const checkoutDir = fromPath ?? cloneMarkpostShallow();
+  // Own the temp directory here (not inside a clone helper) so the `finally`
+  // below covers a clone that fails partway through, not just a successful one.
+  const temporaryCloneDir = fromPath
+    ? undefined
+    : mkdtempSync(join(tmpdir(), 'markpost-contract-sync-'));
 
   try {
-    const contractSource = readContractSource(checkoutDir);
-    const sourceCommit = readCommitHash(checkoutDir);
+    if (temporaryCloneDir) {
+      cloneMarkpostInto(temporaryCloneDir);
+    }
 
-    writeVendoredContract(contractSource);
-    writeManifest(sourceCommit);
+    const checkoutDir = fromPath ?? temporaryCloneDir;
+
+    syncFrom(checkoutDir);
     console.log(`Synced ${VENDOR_FILE} from ${checkoutDir}`);
-    console.log('Review the diff, then run `npm run build` and `npm test` before committing.');
+    console.log(
+      'Review the diff, then run `npm run build` and `npm test` before committing.',
+    );
   } finally {
-    if (isTemporaryClone) {
-      rmSync(checkoutDir, { recursive: true, force: true });
+    if (temporaryCloneDir) {
+      rmSync(temporaryCloneDir, { recursive: true, force: true });
     }
   }
 }

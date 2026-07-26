@@ -41,15 +41,13 @@ export const assertApiSuccess = (response: Response, body: unknown): void => {
 
 // Reads the `attributes` off a single-resource success response. Callers
 // should run this only after `assertApiSuccess` has already ruled out the
-// errors branch — the `?? null` here just satisfies the discriminated
-// `ApiResponse<T>` union's type (`data` is `T | undefined` across its two
-// branches), not a re-check for errors.
+// errors branch. The `?? null` covers every way this can come back empty —
+// `data` missing entirely, `data` explicitly `null`, or (an off-contract
+// response) a resource object with no `attributes` — collapsing all of them
+// to the same `null` the return type promises, rather than leaking
+// `undefined` in the last case.
 export const unwrapResourceAttributes = <
   TResource extends { attributes: unknown },
 >(
   body: ApiResponse<TResource | null>,
-): TResource['attributes'] | null => {
-  const resource = body.data ?? null;
-
-  return resource ? resource.attributes : null;
-};
+): TResource['attributes'] | null => body.data?.attributes ?? null;

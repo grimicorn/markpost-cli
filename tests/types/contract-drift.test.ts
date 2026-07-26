@@ -19,14 +19,14 @@ const VENDOR_CONTRACT_PATH = fileURLToPath(
 );
 
 // The exact set of type names the CLI's own types (records.types.ts,
-// sources.types.ts, api.types.ts) import from the vendored contract. This is
-// a fast, specific check; the full-project compile below is what actually
-// proves the CLI's usage still works, including cases (a renamed export
-// becoming an interface, a re-export) this name list wouldn't catch on its
-// own.
+// sources.types.ts, api.types.ts) import from the vendored contract
+// (`ApiRequest` is intentionally excluded — see the comment in
+// src/types/api.types.ts). This is a fast, specific check; the full-project
+// compile below is what actually proves the CLI's usage still works,
+// including cases (a renamed export becoming an interface, a re-export)
+// this name list wouldn't catch on its own.
 const EXPECTED_VENDORED_EXPORTS = [
   'ApiError',
-  'ApiRequest',
   'ApiResourceObject',
   'ApiResponse',
 ];
@@ -71,7 +71,27 @@ function parseProjectConfig(): ts.ParsedCommandLine {
     );
   }
 
-  return ts.parseJsonConfigFileContent(configFile.config, ts.sys, REPO_ROOT);
+  const parsedConfig = ts.parseJsonConfigFileContent(
+    configFile.config,
+    ts.sys,
+    REPO_ROOT,
+  );
+
+  if (parsedConfig.errors.length > 0) {
+    throw new Error(formatDiagnostics(parsedConfig.errors));
+  }
+
+  // A tsconfig whose `include` stops matching anything (directory rename,
+  // `rootDir` change) would make `ts.createProgram([])` report zero
+  // diagnostics and this test would pass having checked nothing — exactly
+  // the failure mode this check exists to prevent.
+  if (parsedConfig.fileNames.length === 0) {
+    throw new Error(
+      `${TSCONFIG_PATH} matched no files — the drift check would pass vacuously`,
+    );
+  }
+
+  return parsedConfig;
 }
 
 // Compiles the CLI's actual `src/` — the same file set `npm run build`
@@ -106,9 +126,18 @@ describe('markpost contract drift', () => {
     );
   });
 
-  it("the CLI's own source compiles against the vendored contract", () => {
-    const diagnostics = compileProjectDiagnostics();
+  // A full-project compile is slower than vitest's 5s default test timeout,
+  // especially on a cold CI runner; give it real headroom instead of an
+  // intermittent timeout failure.
+  const COMPILE_TEST_TIMEOUT_MS = 30_000;
 
-    expect(diagnostics, formatDiagnostics(diagnostics)).toHaveLength(0);
-  });
+  it(
+    "the CLI's own source compiles against the vendored contract",
+    () => {
+      const diagnostics = compileProjectDiagnostics();
+
+      expect(diagnostics, formatDiagnostics(diagnostics)).toHaveLength(0);
+    },
+    COMPILE_TEST_TIMEOUT_MS,
+  );
 });

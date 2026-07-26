@@ -130,9 +130,20 @@ export const fetchPaginatedRecords = async (
 
     const resources = body.data ?? [];
 
+    // `meta`/`links` fall back to conservative defaults (rather than an
+    // unchecked cast of a possibly-absent field) if a response is ever
+    // malformed: `hasMore: false` and `next: null` both stop pagination
+    // instead of the caller crashing on `undefined.hasMore` or looping
+    // forever chasing a cursor that was never there.
+    const meta = (body.meta as PaginatedRecordsMeta | undefined) ?? {
+      total: resources.length,
+      size,
+      hasMore: false,
+    };
+
     return {
       records: resources.map(({ attributes }) => attributes),
-      meta: body.meta as PaginatedRecordsMeta,
+      meta,
       links: (body.links as ApiPaginationLinks | undefined) ?? {
         next: null,
         prev: null,
