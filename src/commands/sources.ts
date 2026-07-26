@@ -118,16 +118,18 @@ const createSourceCommand = async (): Promise<void> => {
   printSource(source);
 };
 
-const promptForSourceToUpdate = async (): Promise<Source | null> => {
+// Shared by update and delete: list existing sources and let the user pick
+// one, or report there's nothing to act on.
+const promptForSource = async (action: string): Promise<Source | null> => {
   const sources = await fetchSources();
 
   if (sources.length === 0) {
-    console.log('No sources to update.');
+    console.log(`No sources to ${action}.`);
     return null;
   }
 
   const selectedUuid = await select({
-    message: 'Select a source to update',
+    message: `Select a source to ${action}`,
     choices: sources.map((source) => ({
       name: `${source.name} (${source.type})`,
       value: source.uuid,
@@ -137,20 +139,41 @@ const promptForSourceToUpdate = async (): Promise<Source | null> => {
   return sources.find((source) => source.uuid === selectedUuid) ?? null;
 };
 
+const findTargetSource = async (uuid?: string): Promise<Source | null> => {
+  if (!uuid) {
+    return promptForSource('update');
+  }
+
+  const sources = await fetchSources();
+
+  return sources.find((source) => source.uuid === uuid) ?? null;
+};
+
 const updateSourceCommand = async (uuid?: string): Promise<void> => {
-  const target = uuid
-    ? ((await fetchSources()).find((source) => source.uuid === uuid) ?? null)
-    : await promptForSourceToUpdate();
+  const target = await findTargetSource(uuid);
 
   if (!target) {
-    console.error(chalk.redBright('Source not found.'));
+    // fetchSources() swallows transport errors and returns [], so a uuid
+    // that doesn't match is indistinguishable here from a failed lookup.
+    console.error(
+      chalk.redBright(
+        'Source not found, or the source list could not be loaded.',
+      ),
+    );
     return;
   }
 
-  const routeFolder = await input({
-    message: 'Route folder (e.g. 99-incoming/)',
-    default: target.routeFolder,
-  });
+  const routeFolder = (
+    await input({
+      message: 'Route folder (e.g. 99-incoming/)',
+      default: target.routeFolder,
+    })
+  ).trim();
+
+  if (!routeFolder) {
+    console.error(chalk.redBright('Route folder cannot be empty.'));
+    return;
+  }
 
   const source = await updateSource(target.uuid, { routeFolder });
 
@@ -163,27 +186,8 @@ const updateSourceCommand = async (uuid?: string): Promise<void> => {
   printSource(source);
 };
 
-const promptForSourceToDelete = async (): Promise<Source | null> => {
-  const sources = await fetchSources();
-
-  if (sources.length === 0) {
-    console.log('No sources to delete.');
-    return null;
-  }
-
-  const selectedUuid = await select({
-    message: 'Select a source to delete',
-    choices: sources.map((source) => ({
-      name: `${source.name} (${source.type})`,
-      value: source.uuid,
-    })),
-  });
-
-  return sources.find((source) => source.uuid === selectedUuid) ?? null;
-};
-
 const deleteSourceCommand = async (uuid?: string): Promise<void> => {
-  const targetUuid = uuid ?? (await promptForSourceToDelete())?.uuid;
+  const targetUuid = uuid ?? (await promptForSource('delete'))?.uuid;
 
   if (!targetUuid) {
     return;

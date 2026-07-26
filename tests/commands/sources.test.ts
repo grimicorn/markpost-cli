@@ -197,7 +197,7 @@ describe('runSourcesCommand', () => {
       });
     });
 
-    it('reports "Source not found." when the uuid does not match any source', async () => {
+    it('reports not-found when the uuid does not match any source', async () => {
       const { fetchSources, updateSource } = await import('@/libs/sources.js');
       vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
       const { runSourcesCommand } = await import('@/commands/sources.js');
@@ -205,7 +205,39 @@ describe('runSourcesCommand', () => {
       await runSourcesCommand(['update', 'unknown-uuid']);
 
       expect(updateSource).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalledWith('Source not found.');
+      expect(console.error).toHaveBeenCalledWith(
+        'Source not found, or the source list could not be loaded.',
+      );
+    });
+
+    // fetchSources() swallows transport errors and resolves []
+    // (tests/libs/sources.test.ts covers that), so from the command's
+    // perspective a failed lookup looks identical to a bad uuid — same
+    // code path, same assertion as the case above.
+    it('reports the same not-found message when the source list fails to load', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      vi.mocked(fetchSources).mockResolvedValue([]);
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update', 'abc-123']);
+
+      expect(updateSource).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        'Source not found, or the source list could not be loaded.',
+      );
+    });
+
+    it('reports an error and does not call updateSource when the route folder is cleared', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      const { input } = await import('@inquirer/prompts');
+      vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
+      vi.mocked(input).mockResolvedValueOnce('   ');
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update', 'abc-123']);
+
+      expect(updateSource).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith('Route folder cannot be empty.');
     });
 
     it('does nothing when there are no sources to update and no uuid is given', async () => {

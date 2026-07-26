@@ -94,18 +94,21 @@ export const updateSource = async (
   input: UpdateSourceInput,
 ): Promise<Source | null> => {
   try {
-    const body = (await authedSourcesRequest(`/api/sources/${uuid}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/vnd.api+json',
-      },
-      body: JSON.stringify({
-        data: {
-          type: 'sources',
-          attributes: input,
+    const body = (await authedSourcesRequest(
+      `/api/sources/${encodeURIComponent(uuid)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
         },
-      }),
-    })) as ApiResponse;
+        body: JSON.stringify({
+          data: {
+            type: 'sources',
+            attributes: input,
+          },
+        }),
+      },
+    )) as ApiResponse;
 
     return body.data?.attributes ? (body.data.attributes as Source) : null;
   } catch (error) {
@@ -122,9 +125,12 @@ export const deleteSource = async (
   uuid: string,
 ): Promise<ApiDeleteMeta | null> => {
   try {
-    const body = (await authedSourcesRequest(`/api/sources/${uuid}`, {
-      method: 'DELETE',
-    })) as ApiResponse;
+    const body = (await authedSourcesRequest(
+      `/api/sources/${encodeURIComponent(uuid)}`,
+      {
+        method: 'DELETE',
+      },
+    )) as ApiResponse;
 
     return body.meta ? (body.meta as ApiDeleteMeta) : null;
   } catch (error) {
