@@ -34,6 +34,7 @@ describe('runRecordsCommand', () => {
     vi.resetAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.exitCode = undefined;
   });
 
   it('always checks config before dispatching', async () => {
@@ -141,5 +142,6 @@ describe('runRecordsCommand', () => {
       expect.objectContaining({ message: 'Network error' }),
     );
     expect(deleteRecords).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 });

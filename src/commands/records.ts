@@ -21,6 +21,7 @@ export const runRecordsCommand = async (args: string[]): Promise<void> => {
     console.log(USAGE);
   } catch (error) {
     console.error(chalk.redBright(error));
+    process.exitCode = 1;
   }
 };
 

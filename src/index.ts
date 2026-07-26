@@ -26,7 +26,7 @@ const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
   ['records', runRecordsCommand],
 ]);
 
-const commandHandler = command ? COMMAND_HANDLERS.get(command) : undefined;
+const commandHandler = COMMAND_HANDLERS.get(command);
 
 if (commandHandler) {
   await commandHandler(commandArgs);
