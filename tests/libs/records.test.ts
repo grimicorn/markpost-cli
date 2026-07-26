@@ -471,6 +471,28 @@ describe('fetchPaginatedRecords', () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     expect(await fetchPaginatedRecords()).toBeNull();
   });
+
+  // Regression coverage for #29: see the equivalent note in the createRecord
+  // describe block above.
+  it('extracts attributes from full JSON:API resource objects in a list response', async () => {
+    mockFetch({
+      data: [
+        {
+          type: 'records',
+          id: mockRecord.uuid,
+          attributes: mockRecord,
+          links: { self: `/api/records/${mockRecord.uuid}` },
+        },
+      ],
+      meta: mockPaginatedMeta,
+      links: { next: null, prev: null },
+    });
+    expect(await fetchPaginatedRecords()).toEqual({
+      records: [mockRecord],
+      meta: mockPaginatedMeta,
+      links: { next: null, prev: null },
+    });
+  });
 });
 
 describe('createRecord', () => {
@@ -517,6 +539,25 @@ describe('createRecord', () => {
   it('returns null on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     expect(await createRecord('Test Title', 'Test Content')).toBeNull();
+  });
+
+  // Regression coverage for #29: markpost's real resource objects carry
+  // `type`/`id`/`links` alongside `attributes` (see `recordSerializer` in
+  // markpost's server/utils/response.ts), which the CLI's old `ApiData` type
+  // couldn't even describe. Extraction must still work with the full shape,
+  // not just the attributes-only shape the old type modeled.
+  it('extracts attributes from a full JSON:API resource object (type/id/links included)', async () => {
+    mockFetch({
+      data: {
+        type: 'records',
+        id: mockRecord.uuid,
+        attributes: mockRecord,
+        links: { self: `/api/records/${mockRecord.uuid}` },
+      },
+    });
+    expect(await createRecord('Test Title', 'Test Content')).toEqual(
+      mockRecord,
+    );
   });
 });
 

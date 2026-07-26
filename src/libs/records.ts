@@ -1,12 +1,21 @@
-import { assertApiSuccess, getApiToken, getBaseUrl } from '@/libs/api.js';
+import {
+  assertApiSuccess,
+  getApiToken,
+  getBaseUrl,
+  unwrapResourceAttributes,
+} from '@/libs/api.js';
 import { logErrorMessage } from '@/libs/errors.js';
 import {
   ApiDeleteMeta,
-  ApiLinks,
-  ApiListResponse,
-  ApiResponse,
+  ApiDeleteResponse,
+  ApiPaginationLinks,
 } from '@/types/api.types.js';
-import { Record, PaginatedRecordsMeta } from '@/types/records.types.js';
+import {
+  Record,
+  PaginatedRecordsMeta,
+  RecordApiResponse,
+  RecordListApiResponse,
+} from '@/types/records.types.js';
 
 // markpost paginates with a cursor: each response's `links.next` embeds the
 // `page[after]` cursor to request the following page, and is `null` once
@@ -103,7 +112,7 @@ export const fetchPaginatedRecords = async (
 ): Promise<{
   records: Record[];
   meta: PaginatedRecordsMeta;
-  links: ApiLinks;
+  links: ApiPaginationLinks;
 } | null> => {
   try {
     const response = await fetch(
@@ -115,14 +124,19 @@ export const fetchPaginatedRecords = async (
       },
     );
 
-    const body = (await response.json()) as ApiListResponse;
+    const body = (await response.json()) as RecordListApiResponse;
 
     assertApiSuccess(response, body);
 
+    const resources = body.data ?? [];
+
     return {
-      records: body.data?.map(({ attributes }) => attributes) as Record[],
+      records: resources.map(({ attributes }) => attributes),
       meta: body.meta as PaginatedRecordsMeta,
-      links: body.links ?? { next: null, prev: null },
+      links: (body.links as ApiPaginationLinks | undefined) ?? {
+        next: null,
+        prev: null,
+      },
     };
   } catch (error) {
     logErrorMessage(
@@ -156,10 +170,10 @@ export const createRecord = async (
       }),
     });
 
-    const body = (await response.json()) as ApiResponse;
+    const body = (await response.json()) as RecordApiResponse;
     assertApiSuccess(response, body);
 
-    return body.data?.attributes ? (body.data?.attributes as Record) : null;
+    return unwrapResourceAttributes(body);
   } catch (error) {
     logErrorMessage(
       `createRecord["${title}"]`,
@@ -178,11 +192,11 @@ export const fetchRecord = async (uuid: string): Promise<Record | null> => {
       },
     });
 
-    const body = (await response.json()) as ApiResponse;
+    const body = (await response.json()) as RecordApiResponse;
 
     assertApiSuccess(response, body);
 
-    return body.data?.attributes ? (body.data?.attributes as Record) : null;
+    return unwrapResourceAttributes(body);
   } catch (error) {
     logErrorMessage(
       `fetchRecord["${uuid}"]`,
@@ -213,10 +227,10 @@ export const deleteRecords = async (
       }),
     });
 
-    const body = (await response.json()) as ApiResponse;
+    const body = (await response.json()) as ApiDeleteResponse;
     assertApiSuccess(response, body);
 
-    return body.meta ? (body.meta as ApiDeleteMeta) : null;
+    return body.meta ?? null;
   } catch (error) {
     logErrorMessage(
       `deleteRecords["${uuids.join(', ')}"]`,

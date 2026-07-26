@@ -1,5 +1,5 @@
 import { config } from '@/libs/config.js';
-import { ApiError } from '@/types/api.types.js';
+import { ApiError, ApiErrorEnvelope, ApiResponse } from '@/types/api.types.js';
 
 export const getBaseUrl = () => {
   return process.env.BASE_URL ?? 'https://sync.danholloran.me';
@@ -24,14 +24,27 @@ export const formatErrorMessages = (errors: ApiError[]) => {
 };
 
 // Every error response the API sends back is a non-2xx status carrying
-// `data.errors`, regardless of whether the success shape is a single
-// resource or a list. Accept `unknown` so this works for both response
-// shapes without callers needing to reshape their body first.
+// `data.errors` (see `ApiErrorEnvelope`), regardless of whether the success
+// shape is a single resource or a list. Accept `unknown` so this works for
+// both response shapes without callers needing to reshape their body first.
 export const assertApiSuccess = (response: Response, body: unknown): void => {
-  const errors = (body as { data?: { errors?: ApiError[] } })?.data?.errors;
+  const errors = (body as ApiErrorEnvelope | undefined)?.data?.errors;
   const hasErrors = Boolean(errors && errors.length > 0);
 
   if (!response.ok || hasErrors) {
     throw new Error(formatErrorMessages(errors ?? []));
   }
 };
+
+// Reads the `attributes` off a single-resource success response. Callers
+// should run this only after `assertApiSuccess` has already ruled out the
+// errors branch — the `?? null` here just satisfies the discriminated
+// `ApiResponse<T>` union's type (`data` is `T | undefined` across its two
+// branches), not a re-check for errors.
+export function unwrapResourceAttributes<
+  TResource extends { attributes: unknown },
+>(body: ApiResponse<TResource | null>): TResource['attributes'] | null {
+  const resource = body.data ?? null;
+
+  return resource ? resource.attributes : null;
+}

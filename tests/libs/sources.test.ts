@@ -5,14 +5,20 @@ import { logErrorMessage } from '@/libs/errors.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Source } from '@/types/sources.types.js';
 
-vi.mock('@/libs/api.js', () => ({
-  getBaseUrl: () => 'https://example.com',
-  getApiToken: () => 'test-token',
-  formatErrorMessages: (errors: { title: string; detail: string }[]) =>
-    errors.length > 0
-      ? errors.map((e) => `${e.title}: ${e.detail}`).join('\n')
-      : 'Unknown error occurred',
-}));
+// Only override the external-service seams (base URL, token). Everything
+// else — formatErrorMessages, unwrapResourceAttributes — stays real so these
+// tests exercise production response-parsing logic instead of a hand-copied
+// stand-in that could silently drift from it (see tests/libs/records.test.ts).
+vi.mock('@/libs/api.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/libs/api.js')>('@/libs/api.js');
+
+  return {
+    ...actual,
+    getBaseUrl: () => 'https://example.com',
+    getApiToken: () => 'test-token',
+  };
+});
 
 vi.mock('@/libs/errors.js', () => ({
   logErrorMessage: vi.fn(),
@@ -108,6 +114,28 @@ describe('createSource', () => {
 
   it('returns the source attributes on success', async () => {
     mockFetch({ data: { attributes: mockSource } });
+    expect(
+      await createSource({
+        type: 'webhook',
+        name: 'Test Source',
+        routeFolder: '99-incoming/',
+      }),
+    ).toEqual(mockSource);
+  });
+
+  // Regression coverage for #29: markpost's real resource objects carry
+  // `type`/`id`/`links` alongside `attributes` (see `sourceSerializer` in
+  // markpost's server/utils/response.ts), which the CLI's old `ApiData` type
+  // couldn't even describe. Extraction must still work with the full shape.
+  it('extracts attributes from a full JSON:API resource object (type/id/links included)', async () => {
+    mockFetch({
+      data: {
+        type: 'sources',
+        id: mockSource.uuid,
+        attributes: mockSource,
+        links: { self: `/api/sources/${mockSource.uuid}` },
+      },
+    });
     expect(
       await createSource({
         type: 'webhook',
