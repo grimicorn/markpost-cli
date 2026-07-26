@@ -181,6 +181,15 @@ describe('updateSource', () => {
     );
   });
 
+  it('encodes the uuid into the URL path', async () => {
+    mockFetch({ data: { attributes: mockSource } });
+    await updateSource('a/../b', { routeFolder: '00-fixed/' });
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/sources/a%2F..%2Fb',
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+  });
+
   it('sends only the fields provided, including fieldMapping', async () => {
     mockFetch({ data: { attributes: mockSource } });
     await updateSource('abc-123', { fieldMapping: { title: 'subject' } });
@@ -269,6 +278,15 @@ describe('deleteSource', () => {
         method: 'DELETE',
         headers: { Authorization: 'Bearer test-token' },
       }),
+    );
+  });
+
+  it('encodes the uuid into the URL path', async () => {
+    mockFetch({ meta: mockMeta });
+    await deleteSource('a/../b');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/sources/a%2F..%2Fb',
+      expect.objectContaining({ method: 'DELETE' }),
     );
   });
 

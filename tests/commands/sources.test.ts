@@ -210,23 +210,6 @@ describe('runSourcesCommand', () => {
       );
     });
 
-    // fetchSources() swallows transport errors and resolves []
-    // (tests/libs/sources.test.ts covers that), so from the command's
-    // perspective a failed lookup looks identical to a bad uuid — same
-    // code path, same assertion as the case above.
-    it('reports the same not-found message when the source list fails to load', async () => {
-      const { fetchSources, updateSource } = await import('@/libs/sources.js');
-      vi.mocked(fetchSources).mockResolvedValue([]);
-      const { runSourcesCommand } = await import('@/commands/sources.js');
-
-      await runSourcesCommand(['update', 'abc-123']);
-
-      expect(updateSource).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalledWith(
-        'Source not found, or the source list could not be loaded.',
-      );
-    });
-
     it('reports an error and does not call updateSource when the route folder is cleared', async () => {
       const { fetchSources, updateSource } = await import('@/libs/sources.js');
       const { input } = await import('@inquirer/prompts');
@@ -238,6 +221,19 @@ describe('runSourcesCommand', () => {
 
       expect(updateSource).not.toHaveBeenCalled();
       expect(console.error).toHaveBeenCalledWith('Route folder cannot be empty.');
+    });
+
+    it('does not call updateSource when the prefilled value is accepted unchanged', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      const { input } = await import('@inquirer/prompts');
+      vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
+      vi.mocked(input).mockResolvedValueOnce(webhookSource.routeFolder);
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update', 'abc-123']);
+
+      expect(updateSource).not.toHaveBeenCalled();
+      expect(console.log).toHaveBeenCalledWith('Route folder unchanged.');
     });
 
     it('does nothing when there are no sources to update and no uuid is given', async () => {
