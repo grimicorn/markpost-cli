@@ -5,8 +5,9 @@ import {
   formatErrorMessages,
   getApiToken,
   getBaseUrl,
+  unwrapResourceAttributes,
 } from '@/libs/api.js';
-import { ApiError } from '@/types/api.types.js';
+import { ApiError, ApiResourceObject, ApiResponse } from '@/types/api.types.js';
 
 vi.mock('@/libs/config.js', () => ({
   config: { get: vi.fn() },
@@ -119,5 +120,56 @@ describe('assertApiSuccess', () => {
     expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
       'Conflict: Duplicate record',
     );
+  });
+
+  // markpost's declared `ApiResponse<T>` contract models a top-level
+  // `errors` field (`{ errors: ApiError[], data?: never }`) as an
+  // alternative to today's actual `data.errors` shape. Nothing currently
+  // sends this shape, but the CLI must not silently accept it as success
+  // just because it doesn't match the shape every handler happens to use
+  // today.
+  it('throws when the body carries top-level errors instead of nested data.errors', () => {
+    const body = { errors: [error('Unauthorized', 'Invalid or missing token')] };
+
+    expect(() => assertApiSuccess({ ok: false } as Response, body)).toThrow(
+      'Unauthorized: Invalid or missing token',
+    );
+  });
+
+  it('throws when the response is ok but carries top-level errors', () => {
+    const body = { errors: [error('Conflict', 'Duplicate record')] };
+
+    expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
+      'Conflict: Duplicate record',
+    );
+  });
+});
+
+describe('unwrapResourceAttributes', () => {
+  type FixtureAttributes = { uuid: string; title: string };
+  type FixtureResource = ApiResourceObject & {
+    type: 'fixtures';
+    attributes: FixtureAttributes;
+  };
+
+  it('returns the attributes off a resource object', () => {
+    const body: ApiResponse<FixtureResource | null> = {
+      data: {
+        type: 'fixtures',
+        id: 'abc-123',
+        attributes: { uuid: 'abc-123', title: 'Hello' },
+      },
+    };
+
+    expect(unwrapResourceAttributes(body)).toEqual({
+      uuid: 'abc-123',
+      title: 'Hello',
+    });
+  });
+
+  it('returns null when data is null', () => {
+    const body: ApiResponse<FixtureResource | null> = { data: null };
+
+    expect(unwrapResourceAttributes(body)).toBeNull();
   });
 });

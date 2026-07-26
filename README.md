@@ -68,17 +68,14 @@ re-exports the generic envelope types (`ApiError`, `ApiRequest`,
   commit it like any other change.
 - **Catching drift:** `tests/types/contract-drift.test.ts` runs on every
   `npm test` / `npm run test:ci` and fails if either (a) the committed vendored
-  file stops exporting the exact type names the CLI depends on, or (b) the
-  CLI's own usage of those types (`tests/types/fixtures/contract-usage.fixture.ts`)
-  no longer compiles against it. It does this by feeding the vendored file and
-  the fixture through the TypeScript compiler API directly — no network
-  access, no CI workflow changes needed.
-- **Wiring into CI:** the agent that authored this can't push to
-  `.github/workflows/*` (the token lacks the `workflow` scope), so add this
-  step to CI by hand — it's already covered by the existing `npm test` /
-  `npm run test:ci` invocation in your workflow, so no new step is strictly
-  required. If you want an explicit, separate CI signal for contract drift
-  specifically (e.g. to label it distinctly in the checks UI), add:
+  file stops exporting the type names the CLI depends on, or (b) the CLI's own
+  `src/` no longer compiles against it (it recompiles the real project with
+  the TypeScript compiler API, using `tsconfig.json` directly — not a
+  hand-written stand-in). No network access, no CI workflow changes needed.
+- **Wiring into CI:** this is already covered by the existing `npm test` /
+  `npm run test:ci` invocation in your CI workflow — no new step is required.
+  If you want an explicit, separate CI signal for contract drift specifically
+  (e.g. to label it distinctly in the checks UI), add:
   ```yaml
   - name: Check markpost contract drift
     run: npx vitest run tests/types/contract-drift.test.ts

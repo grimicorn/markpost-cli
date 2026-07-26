@@ -594,6 +594,20 @@ describe('fetchRecord', () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     expect(await fetchRecord('abc-123')).toBeNull();
   });
+
+  // Regression coverage for #29: see the equivalent note in the createRecord
+  // describe block above.
+  it('extracts attributes from a full JSON:API resource object (type/id/links included)', async () => {
+    mockFetch({
+      data: {
+        type: 'records',
+        id: mockRecord.uuid,
+        attributes: mockRecord,
+        links: { self: `/api/records/${mockRecord.uuid}` },
+      },
+    });
+    expect(await fetchRecord('abc-123')).toEqual(mockRecord);
+  });
 });
 
 describe('deleteRecords', () => {

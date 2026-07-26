@@ -14,7 +14,13 @@
 //   npm run sync:contract -- --from <path>  # copies from an existing local checkout
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,32 +83,47 @@ function readCommitHash(checkoutDir) {
   }).trim();
 }
 
-function writeVendoredContract(checkoutDir) {
+function readContractSource(checkoutDir) {
   const contractSourcePath = join(checkoutDir, CONTRACT_RELATIVE_PATH);
-  const contractSource = readFileSync(contractSourcePath, 'utf-8');
 
+  if (!existsSync(contractSourcePath)) {
+    throw new Error(
+      `No ${CONTRACT_RELATIVE_PATH} found in ${checkoutDir} — is this a markpost checkout?`,
+    );
+  }
+
+  return readFileSync(contractSourcePath, 'utf-8');
+}
+
+function writeVendoredContract(contractSource) {
   writeFileSync(VENDOR_FILE, `${VENDOR_FILE_HEADER}${contractSource}`);
 }
 
-function writeManifest(checkoutDir) {
+function writeManifest(sourceCommit) {
   const manifest = {
     sourceRepo: MARKPOST_REPO_URL,
     sourceFile: CONTRACT_RELATIVE_PATH,
-    sourceCommit: readCommitHash(checkoutDir),
+    sourceCommit,
     syncedAt: new Date().toISOString(),
   };
 
   writeFileSync(MANIFEST_FILE, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
+// Resolves everything that can fail (missing contract file, `git rev-parse`)
+// before writing anything, so a mid-sync failure can't leave the vendored
+// file and the manifest's `sourceCommit` out of sync with each other.
 function main() {
   const fromPath = parseFromPathArg(process.argv.slice(2));
   const isTemporaryClone = !fromPath;
   const checkoutDir = fromPath ?? cloneMarkpostShallow();
 
   try {
-    writeVendoredContract(checkoutDir);
-    writeManifest(checkoutDir);
+    const contractSource = readContractSource(checkoutDir);
+    const sourceCommit = readCommitHash(checkoutDir);
+
+    writeVendoredContract(contractSource);
+    writeManifest(sourceCommit);
     console.log(`Synced ${VENDOR_FILE} from ${checkoutDir}`);
     console.log('Review the diff, then run `npm run build` and `npm test` before committing.');
   } finally {

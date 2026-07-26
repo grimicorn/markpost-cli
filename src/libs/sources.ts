@@ -37,7 +37,8 @@ const authedSourcesRequest = async (
 
   if (!response.ok) {
     const errorBody = body as ApiErrorEnvelope;
-    throw new Error(formatErrorMessages(errorBody.data?.errors ?? []));
+    const errors = errorBody.data?.errors ?? errorBody.errors;
+    throw new Error(formatErrorMessages(errors ?? []));
   }
 
   return body;

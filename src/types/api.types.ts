@@ -28,21 +28,25 @@ export type ApiDeleteResponse = {
   meta: ApiDeleteMeta;
 };
 
-// The real error envelope every markpost endpoint sends on failure, regardless
-// of the success shape. This is the wire format Nitro's error handler produces
-// for a thrown `ApiError` (`throw createError({ statusCode, data: { errors } })`
-// in markpost's `server/utils/errors.ts`), which nests `errors` under `data`.
+// The real error envelope markpost endpoints send on failure. `data.errors`
+// is the wire format Nitro's error handler actually produces for a thrown
+// `ApiError` (`throw createError({ statusCode, data: { errors } })` in
+// markpost's `server/utils/errors.ts`) — that's the shape every error
+// response the CLI has ever observed actually takes, regardless of whether
+// the success shape is a single resource or a list.
 //
-// This deliberately does NOT match the `errors` branch of the vendored
-// `ApiResponse<T>` union (`{ errors: ApiError[], data?: never }`) — that branch
-// describes a handler's own return-type annotation, not what Nitro's error
-// serialization actually puts on the wire for a non-2xx response. Modeling
-// this as its own type (instead of two independent hand-rolled inline casts,
-// which is what drifted before) keeps that distinction explicit in one place.
+// The top-level `errors` field mirrors the *other* branch of the vendored
+// `ApiResponse<T>` union (`{ errors: ApiError[], data?: never }`): markpost's
+// own declared contract allows a handler to return that shape directly
+// (e.g. on a 2xx), even though none of today's handlers do — they all go
+// through `apiErrorHandler`, which only ever produces `data.errors`. Both
+// are checked so the CLI can't silently swallow errors from either
+// legal shape.
 export type ApiErrorEnvelope = {
   data?: {
     errors?: ApiError[];
   };
+  errors?: ApiError[];
 };
 
 // markpost's own `links` bag is a generic `Record<string, string | null>`

@@ -24,11 +24,14 @@ export const formatErrorMessages = (errors: ApiError[]) => {
 };
 
 // Every error response the API sends back is a non-2xx status carrying
-// `data.errors` (see `ApiErrorEnvelope`), regardless of whether the success
-// shape is a single resource or a list. Accept `unknown` so this works for
-// both response shapes without callers needing to reshape their body first.
+// `data.errors`, regardless of whether the success shape is a single
+// resource or a list; markpost's declared contract also allows a top-level
+// `errors` field as an alternative shape (see `ApiErrorEnvelope`). Accept
+// `unknown` so this works for both response shapes without callers needing
+// to reshape their body first.
 export const assertApiSuccess = (response: Response, body: unknown): void => {
-  const errors = (body as ApiErrorEnvelope | undefined)?.data?.errors;
+  const envelope = body as ApiErrorEnvelope | undefined;
+  const errors = envelope?.data?.errors ?? envelope?.errors;
   const hasErrors = Boolean(errors && errors.length > 0);
 
   if (!response.ok || hasErrors) {
@@ -41,10 +44,12 @@ export const assertApiSuccess = (response: Response, body: unknown): void => {
 // errors branch — the `?? null` here just satisfies the discriminated
 // `ApiResponse<T>` union's type (`data` is `T | undefined` across its two
 // branches), not a re-check for errors.
-export function unwrapResourceAttributes<
+export const unwrapResourceAttributes = <
   TResource extends { attributes: unknown },
->(body: ApiResponse<TResource | null>): TResource['attributes'] | null {
+>(
+  body: ApiResponse<TResource | null>,
+): TResource['attributes'] | null => {
   const resource = body.data ?? null;
 
   return resource ? resource.attributes : null;
-}
+};

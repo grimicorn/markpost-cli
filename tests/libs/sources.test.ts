@@ -66,6 +66,22 @@ describe('fetchSources', () => {
     expect(await fetchSources()).toEqual([mockSource]);
   });
 
+  // Regression coverage for #29: see the equivalent note in the createSource
+  // describe block below.
+  it('extracts attributes from full JSON:API resource objects in a list response', async () => {
+    mockFetch({
+      data: [
+        {
+          type: 'sources',
+          id: mockSource.uuid,
+          attributes: mockSource,
+          links: { self: `/api/sources/${mockSource.uuid}` },
+        },
+      ],
+    });
+    expect(await fetchSources()).toEqual([mockSource]);
+  });
+
   it('returns [] and surfaces error details when the response is not ok', async () => {
     mockFetch({ data: { errors: [{ title: 'Error', detail: 'Server error' }] } }, false);
     expect(await fetchSources()).toEqual([]);
