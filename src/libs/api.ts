@@ -31,11 +31,17 @@ export const formatErrorMessages = (errors: ApiError[]) => {
 // to reshape their body first.
 export const assertApiSuccess = (response: Response, body: unknown): void => {
   const envelope = body as ApiErrorEnvelope | undefined;
-  const errors = envelope?.data?.errors ?? envelope?.errors;
-  const hasErrors = Boolean(errors && errors.length > 0);
+  // Combine both shapes rather than falling back from one to the other:
+  // `??` would let a present-but-empty `data.errors: []` mask a populated
+  // top-level `errors`, silently passing a body that carries both.
+  const errors = [
+    ...(envelope?.data?.errors ?? []),
+    ...(envelope?.errors ?? []),
+  ];
+  const hasErrors = errors.length > 0;
 
   if (!response.ok || hasErrors) {
-    throw new Error(formatErrorMessages(errors ?? []));
+    throw new Error(formatErrorMessages(errors));
   }
 };
 

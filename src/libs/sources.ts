@@ -44,8 +44,18 @@ export const fetchSources = async (): Promise<Source[]> => {
     )) as SourceListApiResponse;
 
     const resources = body.data ?? [];
+    const usableResources = resources.filter(
+      (resource) => resource.attributes !== undefined,
+    );
 
-    return resources.map(({ attributes }) => attributes);
+    if (usableResources.length !== resources.length) {
+      logErrorMessage(
+        'fetchSources',
+        `Skipped ${resources.length - usableResources.length} source(s) with no attributes`,
+      );
+    }
+
+    return usableResources.map(({ attributes }) => attributes);
   } catch (error) {
     logErrorMessage(
       'fetchSources',

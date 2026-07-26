@@ -31,7 +31,10 @@ const EXPECTED_VENDORED_EXPORTS = [
   'ApiResponse',
 ];
 
-function exportedTypeAliasNames(sourceText: string): string[] {
+// Covers both `export type Foo = ...` and `export interface Foo { ... }` —
+// markpost could reasonably switch between the two without changing the
+// CLI's usage at all, and this check shouldn't raise a false alarm if it does.
+function exportedTypeNames(sourceText: string): string[] {
   const sourceFile = ts.createSourceFile(
     'markpost-api.types.ts',
     sourceText,
@@ -42,7 +45,7 @@ function exportedTypeAliasNames(sourceText: string): string[] {
   const names: string[] = [];
 
   sourceFile.forEachChild((node) => {
-    if (isExportedTypeAlias(node)) {
+    if (isExportedTypeAlias(node) || isExportedInterface(node)) {
       names.push(node.name.text);
     }
   });
@@ -50,16 +53,20 @@ function exportedTypeAliasNames(sourceText: string): string[] {
   return names;
 }
 
-function isExportedTypeAlias(node: ts.Node): node is ts.TypeAliasDeclaration {
-  if (!ts.isTypeAliasDeclaration(node)) {
-    return false;
-  }
-
+function isExported(node: ts.TypeAliasDeclaration | ts.InterfaceDeclaration): boolean {
   return (
     node.modifiers?.some(
       (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
     ) ?? false
   );
+}
+
+function isExportedTypeAlias(node: ts.Node): node is ts.TypeAliasDeclaration {
+  return ts.isTypeAliasDeclaration(node) && isExported(node);
+}
+
+function isExportedInterface(node: ts.Node): node is ts.InterfaceDeclaration {
+  return ts.isInterfaceDeclaration(node) && isExported(node);
 }
 
 function parseProjectConfig(): ts.ParsedCommandLine {
@@ -119,7 +126,7 @@ function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
 describe('markpost contract drift', () => {
   it('the vendored contract still exports what the CLI depends on', () => {
     const vendorSource = readFileSync(VENDOR_CONTRACT_PATH, 'utf-8');
-    const actualExports = exportedTypeAliasNames(vendorSource);
+    const actualExports = exportedTypeNames(vendorSource);
 
     expect(actualExports).toEqual(
       expect.arrayContaining(EXPECTED_VENDORED_EXPORTS),

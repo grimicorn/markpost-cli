@@ -10,8 +10,9 @@
 // the diff it produces, then commit the result.
 //
 // Usage:
-//   npm run sync:contract                # shallow-clones markpost fresh
-//   npm run sync:contract -- --from <path>  # copies from an existing local checkout
+//   npm run sync:contract                     # shallow-clones markpost fresh
+//   npm run sync:contract -- --from <path>    # copies from an existing local checkout
+//   npm run sync:contract -- --from=<path>    # same, `=` form
 
 import { execFileSync } from 'node:child_process';
 import {
@@ -51,14 +52,29 @@ const VENDOR_FILE_HEADER = `// GENERATED FILE — do not hand-edit.
 
 `;
 
+// Accepts both `--from <path>` and `--from=<path>`. A typo'd flag (e.g.
+// `--form`) must fail loudly rather than silently falling through to a
+// network clone that overwrites the vendored file from upstream `main`
+// instead of the checkout the caller actually meant.
 function parseFromPathArg(argv) {
-  const fromFlagIndex = argv.indexOf('--from');
+  const equalsFlag = argv.find((argument) => argument.startsWith('--from='));
+  const spaceFlagIndex = argv.indexOf('--from');
 
-  if (fromFlagIndex === -1) {
+  if (!equalsFlag && spaceFlagIndex === -1) {
+    const unrecognizedFlags = argv.filter((argument) =>
+      argument.startsWith('--'),
+    );
+
+    if (unrecognizedFlags.length > 0) {
+      throw new Error(`Unrecognized option(s): ${unrecognizedFlags.join(', ')}`);
+    }
+
     return undefined;
   }
 
-  const fromPath = argv[fromFlagIndex + 1];
+  const fromPath = equalsFlag
+    ? equalsFlag.slice('--from='.length)
+    : argv[spaceFlagIndex + 1];
 
   if (!fromPath || fromPath.startsWith('--')) {
     throw new Error('--from requires a path to a local markpost checkout');
@@ -134,11 +150,13 @@ function writeManifest(sourceCommit) {
 // changes to it, `git rev-parse`) before writing anything, so a mid-sync
 // failure can't leave the vendored file and the manifest's `sourceCommit`
 // out of sync with each other, or a claimed provenance the checkout doesn't
-// actually match.
+// actually match. Checks the contract file first so a non-markpost
+// directory gets the friendly "is this a markpost checkout?" message
+// instead of a raw git error.
 function syncFrom(checkoutDir) {
-  assertContractIsCommitted(checkoutDir);
-
   const contractSource = readContractSource(checkoutDir);
+
+  assertContractIsCommitted(checkoutDir);
   const sourceCommit = readCommitHash(checkoutDir);
 
   writeVendoredContract(contractSource);

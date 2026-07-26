@@ -129,20 +129,31 @@ export const fetchPaginatedRecords = async (
     assertApiSuccess(response, body);
 
     const resources = body.data ?? [];
+    const usableResources = resources.filter(
+      (resource) => resource.attributes !== undefined,
+    );
 
-    // `meta`/`links` fall back to conservative defaults (rather than an
-    // unchecked cast of a possibly-absent field) if a response is ever
-    // malformed: `hasMore: false` and `next: null` both stop pagination
-    // instead of the caller crashing on `undefined.hasMore` or looping
-    // forever chasing a cursor that was never there.
-    const meta = (body.meta as PaginatedRecordsMeta | undefined) ?? {
-      total: resources.length,
-      size,
-      hasMore: false,
+    if (usableResources.length !== resources.length) {
+      logErrorMessage(
+        'fetchPaginatedRecords',
+        `Skipped ${resources.length - usableResources.length} record(s) with no attributes`,
+      );
+    }
+
+    // `meta`/`links` fall back to conservative defaults, field by field
+    // (rather than an unchecked cast of a possibly-partial object), if a
+    // response is ever malformed: `hasMore: false` and `next: null` both
+    // stop pagination instead of the caller crashing on `undefined.hasMore`
+    // or looping forever chasing a cursor that was never there.
+    const rawMeta = body.meta as Partial<PaginatedRecordsMeta> | undefined;
+    const meta: PaginatedRecordsMeta = {
+      total: rawMeta?.total ?? usableResources.length,
+      size: rawMeta?.size ?? size,
+      hasMore: rawMeta?.hasMore ?? false,
     };
 
     return {
-      records: resources.map(({ attributes }) => attributes),
+      records: usableResources.map(({ attributes }) => attributes),
       meta,
       links: (body.links as ApiPaginationLinks | undefined) ?? {
         next: null,

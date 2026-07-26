@@ -143,6 +143,17 @@ describe('assertApiSuccess', () => {
       'Conflict: Duplicate record',
     );
   });
+
+  it('does not let an empty data.errors mask a populated top-level errors', () => {
+    const body = {
+      data: { errors: [] },
+      errors: [error('Conflict', 'Duplicate record')],
+    };
+
+    expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
+      'Conflict: Duplicate record',
+    );
+  });
 });
 
 describe('unwrapResourceAttributes', () => {

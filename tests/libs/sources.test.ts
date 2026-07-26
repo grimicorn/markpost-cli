@@ -5,6 +5,15 @@ import { logErrorMessage } from '@/libs/errors.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Source } from '@/types/sources.types.js';
 
+// @/libs/api.js imports @/libs/config.js, which constructs a real
+// `conf`-backed store (touching the developer's actual config directory) as
+// soon as it's loaded. Mock it so importActual below doesn't pull in that
+// side effect — getApiToken is overridden regardless, so nothing needs the
+// real store to resolve a value.
+vi.mock('@/libs/config.js', () => ({
+  config: { get: vi.fn() },
+}));
+
 // Only override the external-service seams (base URL, token). Everything
 // else — formatErrorMessages, unwrapResourceAttributes — stays real so these
 // tests exercise production response-parsing logic instead of a hand-copied
