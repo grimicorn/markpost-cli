@@ -17,38 +17,47 @@ export const config = new Conf({
   schema,
 });
 
+const checkApiToken = async () => {
+  if (config.get('apiToken')) {
+    return;
+  }
+
+  if (process.env.API_TOKEN) {
+    config.set('apiToken', process.env.API_TOKEN);
+    return;
+  }
+
+  const apiToken = await input({ message: 'Sync API Token' });
+
+  if (!apiToken) {
+    console.error(chalk.redBright('Sync API Token is required!'));
+    process.exit();
+  }
+
+  config.set('apiToken', apiToken);
+};
+
+const checkOutputDirectory = async () => {
+  if (config.get('outputDirectory')) {
+    return;
+  }
+
+  if (process.env.OUTPUT_DIRECTORY) {
+    config.set('outputDirectory', process.env.OUTPUT_DIRECTORY);
+    return;
+  }
+
+  const outputDirectory = await input({ message: 'Output Directory' });
+
+  if (!outputDirectory) {
+    console.error(chalk.redBright('Output Directory is required!'));
+    process.exit();
+  }
+
+  config.set('outputDirectory', outputDirectory);
+};
+
 export const checkConfig = async () => {
-  // API Token
-  if (!config.get('apiToken')) {
-    if (process.env.API_TOKEN) {
-      config.set('apiToken', process.env.API_TOKEN);
-      return;
-    }
-
-    const apiToken = await input({ message: 'Sync API Token' });
-
-    if (!apiToken) {
-      console.error(chalk.redBright('Sync API Token is required!'));
-      process.exit();
-    }
-
-    config.set('apiToken', apiToken);
-  }
-
-  // Output Directory
-  if (!config.get('outputDirectory')) {
-    if (process.env.OUTPUT_DIRECTORY) {
-      config.set('outputDirectory', process.env.OUTPUT_DIRECTORY);
-      return;
-    }
-
-    const outputDirectory = await input({ message: 'Output Directory' });
-
-    if (!outputDirectory) {
-      console.error(chalk.redBright('Output Directory is required!'));
-      process.exit();
-    }
-
-    config.set('outputDirectory', outputDirectory);
-  }
+  await checkApiToken();
+  await checkOutputDirectory();
 };
