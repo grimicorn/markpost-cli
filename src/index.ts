@@ -16,16 +16,17 @@ const [command, ...commandArgs] = process.argv.slice(2);
 // One source of truth for dispatch: adding a command here is enough, unlike
 // a parallel list of `if (command === 'x')` blocks plus a separately
 // maintained "known commands" array that can drift out of sync.
-const COMMAND_HANDLERS = {
-  push: runPushCommand,
-  get: runGetCommand,
-  sources: runSourcesCommand,
-  records: runRecordsCommand,
-};
+// A Map (rather than a plain object) means a command named "toString" or
+// "constructor" can't accidentally resolve to an inherited Object.prototype
+// member instead of falling through to the "unknown command" branch.
+const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
+  ['push', runPushCommand],
+  ['get', runGetCommand],
+  ['sources', runSourcesCommand],
+  ['records', runRecordsCommand],
+]);
 
-const commandHandler = command
-  ? COMMAND_HANDLERS[command as keyof typeof COMMAND_HANDLERS]
-  : undefined;
+const commandHandler = command ? COMMAND_HANDLERS.get(command) : undefined;
 
 if (commandHandler) {
   await commandHandler(commandArgs);

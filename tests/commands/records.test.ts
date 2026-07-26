@@ -128,7 +128,7 @@ describe('runRecordsCommand', () => {
     });
   });
 
-  it('catches and logs unexpected errors (e.g. a rejected fetch)', async () => {
+  it('surfaces a fetch error instead of throwing', async () => {
     const { fetchAllRecords, deleteRecords } = await import(
       '@/libs/records.js'
     );
@@ -137,7 +137,9 @@ describe('runRecordsCommand', () => {
 
     await runRecordsCommand(['list']);
 
-    expect(console.error).toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'Network error' }),
+    );
     expect(deleteRecords).not.toHaveBeenCalled();
   });
 });

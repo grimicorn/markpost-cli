@@ -121,6 +121,30 @@ describe('index', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it.each(['toString', 'constructor', 'hasOwnProperty', '__proto__'])(
+    'treats "%s" as an unknown command rather than resolving it off Object.prototype',
+    async (command) => {
+      process.argv = ['node', 'index.js', command];
+      const { runPushCommand } = await import('@/commands/push.js');
+      const { runGetCommand } = await import('@/commands/get.js');
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+      const { runRecordsCommand } = await import('@/commands/records.js');
+      const { fetchAllRecords } = await import('@/libs/records.js');
+
+      await import('@/index.js');
+
+      expect(runPushCommand).not.toHaveBeenCalled();
+      expect(runGetCommand).not.toHaveBeenCalled();
+      expect(runSourcesCommand).not.toHaveBeenCalled();
+      expect(runRecordsCommand).not.toHaveBeenCalled();
+      expect(fetchAllRecords).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining(`Unknown command: ${command}`),
+      );
+      expect(process.exitCode).toBe(1);
+    },
+  );
+
   it('fetches all records and writes each as markdown', async () => {
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
