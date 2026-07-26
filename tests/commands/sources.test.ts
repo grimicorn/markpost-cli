@@ -249,6 +249,9 @@ describe('runSourcesCommand', () => {
 
       expect(updateSource).not.toHaveBeenCalled();
       expect(console.log).toHaveBeenCalledWith('No sources to update.');
+      // Guards against re-reporting the same empty-list case as a second,
+      // contradictory "not found" error.
+      expect(console.error).not.toHaveBeenCalled();
     });
 
     it('reports an error when the update fails', async () => {

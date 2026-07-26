@@ -139,30 +139,7 @@ const promptForSource = async (action: string): Promise<Source | null> => {
   return sources.find((source) => source.uuid === selectedUuid) ?? null;
 };
 
-const findTargetSource = async (uuid?: string): Promise<Source | null> => {
-  if (!uuid) {
-    return promptForSource('update');
-  }
-
-  const sources = await fetchSources();
-
-  return sources.find((source) => source.uuid === uuid) ?? null;
-};
-
-const updateSourceCommand = async (uuid?: string): Promise<void> => {
-  const target = await findTargetSource(uuid);
-
-  if (!target) {
-    // fetchSources() swallows transport errors and returns [], so a uuid
-    // that doesn't match is indistinguishable here from a failed lookup.
-    console.error(
-      chalk.redBright(
-        'Source not found, or the source list could not be loaded.',
-      ),
-    );
-    return;
-  }
-
+const promptAndApplyRouteFolder = async (target: Source): Promise<void> => {
   const routeFolder = (
     await input({
       message: 'Route folder (e.g. 99-incoming/)',
@@ -184,6 +161,37 @@ const updateSourceCommand = async (uuid?: string): Promise<void> => {
 
   console.log(chalk.greenBright(`Updated source "${source.name}"`));
   printSource(source);
+};
+
+const updateSourceCommand = async (uuid?: string): Promise<void> => {
+  if (!uuid) {
+    // promptForSource already reported "No sources to update." if the list
+    // was empty, so a null here means the user has nothing further to see.
+    const picked = await promptForSource('update');
+
+    if (!picked) {
+      return;
+    }
+
+    await promptAndApplyRouteFolder(picked);
+    return;
+  }
+
+  const sources = await fetchSources();
+  const target = sources.find((source) => source.uuid === uuid);
+
+  if (!target) {
+    // fetchSources() swallows transport errors and returns [], so a uuid
+    // that doesn't match is indistinguishable here from a failed lookup.
+    console.error(
+      chalk.redBright(
+        'Source not found, or the source list could not be loaded.',
+      ),
+    );
+    return;
+  }
+
+  await promptAndApplyRouteFolder(target);
 };
 
 const deleteSourceCommand = async (uuid?: string): Promise<void> => {
