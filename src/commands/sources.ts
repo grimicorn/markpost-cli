@@ -1,6 +1,11 @@
 import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
-import { createSource, deleteSource, fetchSources } from '@/libs/sources.js';
+import {
+  createSource,
+  deleteSource,
+  fetchSources,
+  updateSource,
+} from '@/libs/sources.js';
 import { checkConfig } from '@/libs/config.js';
 import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 
@@ -10,10 +15,11 @@ import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 const WEBHOOK_INGEST_BASE = 'https://ingest.markpost.io/v1/hooks';
 const EMAIL_DOMAIN = 'in.markpost.io';
 
-const USAGE = `Usage: markpost sources <list|create|delete> [uuid]
+const USAGE = `Usage: markpost sources <list|create|update|delete> [uuid]
 
   list           List all sources
   create         Create a new source (prompts for details)
+  update [uuid]  Update a source's route folder; prompts to pick one if uuid is omitted
   delete [uuid]  Delete a source; prompts to pick one if uuid is omitted`;
 
 export const buildEndpointUrl = (
@@ -40,6 +46,11 @@ export const runSourcesCommand = async (args: string[]): Promise<void> => {
 
     if (subcommand === 'create') {
       await createSourceCommand();
+      return;
+    }
+
+    if (subcommand === 'update') {
+      await updateSourceCommand(uuid);
       return;
     }
 
@@ -104,6 +115,51 @@ const createSourceCommand = async (): Promise<void> => {
   }
 
   console.log(chalk.greenBright(`Created source "${source.name}"`));
+  printSource(source);
+};
+
+const promptForSourceToUpdate = async (): Promise<Source | null> => {
+  const sources = await fetchSources();
+
+  if (sources.length === 0) {
+    console.log('No sources to update.');
+    return null;
+  }
+
+  const selectedUuid = await select({
+    message: 'Select a source to update',
+    choices: sources.map((source) => ({
+      name: `${source.name} (${source.type})`,
+      value: source.uuid,
+    })),
+  });
+
+  return sources.find((source) => source.uuid === selectedUuid) ?? null;
+};
+
+const updateSourceCommand = async (uuid?: string): Promise<void> => {
+  const target = uuid
+    ? ((await fetchSources()).find((source) => source.uuid === uuid) ?? null)
+    : await promptForSourceToUpdate();
+
+  if (!target) {
+    console.error(chalk.redBright('Source not found.'));
+    return;
+  }
+
+  const routeFolder = await input({
+    message: 'Route folder (e.g. 99-incoming/)',
+    default: target.routeFolder,
+  });
+
+  const source = await updateSource(target.uuid, { routeFolder });
+
+  if (!source) {
+    console.error(chalk.redBright('Failed to update source.'));
+    return;
+  }
+
+  console.log(chalk.greenBright(`Updated source "${source.name}"`));
   printSource(source);
 };
 

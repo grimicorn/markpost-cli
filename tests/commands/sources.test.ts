@@ -6,6 +6,7 @@ vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/sources.js', () => ({
   fetchSources: vi.fn(),
   createSource: vi.fn(),
+  updateSource: vi.fn(),
   deleteSource: vi.fn(),
 }));
 vi.mock('@inquirer/prompts', () => ({ input: vi.fn(), select: vi.fn() }));
@@ -148,6 +149,87 @@ describe('runSourcesCommand', () => {
       await runSourcesCommand(['create']);
 
       expect(console.error).toHaveBeenCalledWith('Failed to create source.');
+    });
+  });
+
+  describe('update', () => {
+    it('updates directly by uuid when one is provided', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      const { input, select } = await import('@inquirer/prompts');
+      vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
+      vi.mocked(input).mockResolvedValueOnce('00-fixed/');
+      vi.mocked(updateSource).mockResolvedValue({
+        ...webhookSource,
+        routeFolder: '00-fixed/',
+      });
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update', 'abc-123']);
+
+      expect(select).not.toHaveBeenCalled();
+      expect(input).toHaveBeenCalledWith(
+        expect.objectContaining({ default: '99-incoming/' }),
+      );
+      expect(updateSource).toHaveBeenCalledWith('abc-123', {
+        routeFolder: '00-fixed/',
+      });
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Updated source "Webhook Source"'),
+      );
+    });
+
+    it('prompts to pick a source when no uuid is given', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      const { input, select } = await import('@inquirer/prompts');
+      vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
+      vi.mocked(select).mockResolvedValue('abc-123');
+      vi.mocked(input).mockResolvedValueOnce('00-fixed/');
+      vi.mocked(updateSource).mockResolvedValue({
+        ...webhookSource,
+        routeFolder: '00-fixed/',
+      });
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update']);
+
+      expect(updateSource).toHaveBeenCalledWith('abc-123', {
+        routeFolder: '00-fixed/',
+      });
+    });
+
+    it('reports "Source not found." when the uuid does not match any source', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update', 'unknown-uuid']);
+
+      expect(updateSource).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith('Source not found.');
+    });
+
+    it('does nothing when there are no sources to update and no uuid is given', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      vi.mocked(fetchSources).mockResolvedValue([]);
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update']);
+
+      expect(updateSource).not.toHaveBeenCalled();
+      expect(console.log).toHaveBeenCalledWith('No sources to update.');
+    });
+
+    it('reports an error when the update fails', async () => {
+      const { fetchSources, updateSource } = await import('@/libs/sources.js');
+      const { input } = await import('@inquirer/prompts');
+      vi.mocked(fetchSources).mockResolvedValue([webhookSource]);
+      vi.mocked(input).mockResolvedValueOnce('00-fixed/');
+      vi.mocked(updateSource).mockResolvedValue(null);
+      const { runSourcesCommand } = await import('@/commands/sources.js');
+
+      await runSourcesCommand(['update', 'abc-123']);
+
+      expect(console.error).toHaveBeenCalledWith('Failed to update source.');
     });
   });
 

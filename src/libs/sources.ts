@@ -6,7 +6,11 @@ import {
   ApiListResponse,
   ApiResponse,
 } from '@/types/api.types.js';
-import { CreateSourceInput, Source } from '@/types/sources.types.js';
+import {
+  CreateSourceInput,
+  Source,
+  UpdateSourceInput,
+} from '@/types/sources.types.js';
 
 // The server always responds with `{ data: { errors } }` on failure,
 // regardless of endpoint, even where the success shape's `data` is an
@@ -78,6 +82,35 @@ export const createSource = async (
   } catch (error) {
     logErrorMessage(
       `createSource["${input.name}"]`,
+      error instanceof Error ? error.message : String(error),
+    );
+
+    return null;
+  }
+};
+
+export const updateSource = async (
+  uuid: string,
+  input: UpdateSourceInput,
+): Promise<Source | null> => {
+  try {
+    const body = (await authedSourcesRequest(`/api/sources/${uuid}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/vnd.api+json',
+      },
+      body: JSON.stringify({
+        data: {
+          type: 'sources',
+          attributes: input,
+        },
+      }),
+    })) as ApiResponse;
+
+    return body.data?.attributes ? (body.data.attributes as Source) : null;
+  } catch (error) {
+    logErrorMessage(
+      `updateSource["${uuid}"]`,
       error instanceof Error ? error.message : String(error),
     );
 
