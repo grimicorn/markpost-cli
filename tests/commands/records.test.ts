@@ -31,7 +31,7 @@ const secondRecord: Record = {
 describe('runRecordsCommand', () => {
   beforeEach(() => {
     vi.resetModules();
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
@@ -47,7 +47,20 @@ describe('runRecordsCommand', () => {
     expect(checkConfig).toHaveBeenCalled();
   });
 
-  it('prints usage for an unrecognized or missing subcommand', async () => {
+  it('never dispatches to list when checkConfig fails', async () => {
+    const { checkConfig } = await import('@/libs/config.js');
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    vi.mocked(checkConfig).mockRejectedValue(new Error('Missing API key'));
+    const { runRecordsCommand } = await import('@/commands/records.js');
+
+    await runRecordsCommand(['list']);
+
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it('prints usage when no subcommand is given', async () => {
+    const { fetchAllRecords } = await import('@/libs/records.js');
     const { runRecordsCommand } = await import('@/commands/records.js');
 
     await runRecordsCommand([]);
@@ -55,6 +68,19 @@ describe('runRecordsCommand', () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Usage: markpost records'),
     );
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+  });
+
+  it('prints usage for an unrecognized subcommand', async () => {
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { runRecordsCommand } = await import('@/commands/records.js');
+
+    await runRecordsCommand(['bogus']);
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Usage: markpost records'),
+    );
+    expect(fetchAllRecords).not.toHaveBeenCalled();
   });
 
   describe('list', () => {
