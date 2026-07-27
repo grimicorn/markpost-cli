@@ -46,6 +46,43 @@ describe('checkConfig', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
+  it('sets both values from env vars without prompting when both are set', async () => {
+    mockGet.mockReturnValue(undefined);
+    process.env.API_TOKEN = 'env-token';
+    process.env.OUTPUT_DIRECTORY = '/env/dir';
+
+    await checkConfig();
+
+    expect(mockSet).toHaveBeenCalledWith('apiToken', 'env-token');
+    expect(mockSet).toHaveBeenCalledWith('outputDirectory', '/env/dir');
+    expect(input).not.toHaveBeenCalled();
+  });
+
+  it('still prompts for outputDirectory when API_TOKEN comes from env and directory is unset', async () => {
+    mockGet.mockReturnValue(undefined);
+    process.env.API_TOKEN = 'env-token';
+    vi.mocked(input).mockResolvedValue('/prompted/dir');
+
+    await checkConfig();
+
+    expect(mockSet).toHaveBeenCalledWith('apiToken', 'env-token');
+    expect(input).toHaveBeenCalledTimes(1);
+    expect(input).toHaveBeenCalledWith({ message: 'Output Directory' });
+    expect(mockSet).toHaveBeenCalledWith('outputDirectory', '/prompted/dir');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('prompts for both values in order when neither is set', async () => {
+    mockGet.mockReturnValue(undefined);
+    vi.mocked(input).mockResolvedValueOnce('my-token').mockResolvedValueOnce('/my/dir');
+
+    await checkConfig();
+
+    expect(input).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(input).mock.calls[0][0]).toEqual({ message: 'Sync API Token' });
+    expect(vi.mocked(input).mock.calls[1][0]).toEqual({ message: 'Output Directory' });
+  });
+
   describe('apiToken', () => {
     beforeEach(() => {
       mockGet.mockImplementation((key: string) =>
@@ -87,6 +124,19 @@ describe('checkConfig', () => {
       await checkConfig();
       expect(mockSet).toHaveBeenCalledWith('outputDirectory', '/env/dir');
       expect(input).not.toHaveBeenCalled();
+    });
+
+    it('still prompts for apiToken when OUTPUT_DIRECTORY comes from env and token is unset', async () => {
+      mockGet.mockReturnValue(undefined);
+      process.env.OUTPUT_DIRECTORY = '/env/dir';
+      vi.mocked(input).mockResolvedValue('my-token');
+
+      await checkConfig();
+
+      expect(input).toHaveBeenCalledTimes(1);
+      expect(input).toHaveBeenCalledWith({ message: 'Sync API Token' });
+      expect(mockSet).toHaveBeenCalledWith('apiToken', 'my-token');
+      expect(mockSet).toHaveBeenCalledWith('outputDirectory', '/env/dir');
     });
 
     it('prompts and sets directory when not in env or config', async () => {
