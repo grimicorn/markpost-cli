@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSource, deleteSource, fetchSources } from '@/libs/sources.js';
+import {
+  createSource,
+  deleteSource,
+  fetchSources,
+  updateSource,
+} from '@/libs/sources.js';
 import { logErrorMessage } from '@/libs/errors.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Source } from '@/types/sources.types.js';
@@ -150,6 +155,115 @@ describe('createSource', () => {
   });
 });
 
+describe('updateSource', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('calls fetch with PATCH, correct headers, and JSON:API body', async () => {
+    mockFetch({ data: { attributes: mockSource } });
+    await updateSource('abc-123', { routeFolder: '00-fixed/' });
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/sources/abc-123',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({
+          data: {
+            type: 'sources',
+            attributes: { routeFolder: '00-fixed/' },
+          },
+        }),
+      }),
+    );
+  });
+
+  it('encodes the uuid into the URL path', async () => {
+    mockFetch({ data: { attributes: mockSource } });
+    await updateSource('a/../b', { routeFolder: '00-fixed/' });
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/sources/a%2F..%2Fb',
+      expect.objectContaining({ method: 'PATCH' }),
+    );
+  });
+
+  it('sends only the fields provided, including fieldMapping', async () => {
+    mockFetch({ data: { attributes: mockSource } });
+    await updateSource('abc-123', { fieldMapping: { title: 'subject' } });
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/sources/abc-123',
+      expect.objectContaining({
+        body: JSON.stringify({
+          data: {
+            type: 'sources',
+            attributes: { fieldMapping: { title: 'subject' } },
+          },
+        }),
+      }),
+    );
+  });
+
+  it('returns the updated source attributes on success', async () => {
+    mockFetch({ data: { attributes: mockSource } });
+    expect(
+      await updateSource('abc-123', { routeFolder: '00-fixed/' }),
+    ).toEqual(mockSource);
+  });
+
+  it('returns null and surfaces error details when the uuid is not found', async () => {
+    mockFetch(
+      {
+        data: {
+          errors: [
+            { title: 'Not Found', detail: 'No source was found for the given uuid.' },
+          ],
+        },
+      },
+      false,
+    );
+    const result = await updateSource('missing-uuid', {
+      routeFolder: '00-fixed/',
+    });
+    expect(result).toBeNull();
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'updateSource["missing-uuid"]',
+      'Not Found: No source was found for the given uuid.',
+    );
+  });
+
+  it('returns null and surfaces error details when no fields are provided', async () => {
+    mockFetch(
+      {
+        data: {
+          errors: [
+            {
+              title: 'Invalid Attribute',
+              detail: 'At least one of routeFolder or fieldMapping must be provided.',
+            },
+          ],
+        },
+      },
+      false,
+    );
+    const result = await updateSource('abc-123', {});
+    expect(result).toBeNull();
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'updateSource["abc-123"]',
+      'Invalid Attribute: At least one of routeFolder or fieldMapping must be provided.',
+    );
+  });
+
+  it('returns null on network failure', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+    expect(
+      await updateSource('abc-123', { routeFolder: '00-fixed/' }),
+    ).toBeNull();
+  });
+});
+
 describe('deleteSource', () => {
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -164,6 +278,15 @@ describe('deleteSource', () => {
         method: 'DELETE',
         headers: { Authorization: 'Bearer test-token' },
       }),
+    );
+  });
+
+  it('encodes the uuid into the URL path', async () => {
+    mockFetch({ meta: mockMeta });
+    await deleteSource('a/../b');
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/sources/a%2F..%2Fb',
+      expect.objectContaining({ method: 'DELETE' }),
     );
   });
 

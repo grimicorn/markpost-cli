@@ -28,3 +28,10 @@ export type CreateSourceInput = {
   routeFolder: string;
   provider?: string;
 };
+
+// Mirrors markpost's PATCH /api/sources/[uuid] payload, which only accepts
+// routeFolder and fieldMapping updates.
+export type UpdateSourceInput = {
+  routeFolder?: string;
+  fieldMapping?: unknown;
+};
