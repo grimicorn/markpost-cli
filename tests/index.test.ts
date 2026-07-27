@@ -10,7 +10,9 @@ vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
 vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
-vi.mock('chalk', () => ({ default: { redBright: vi.fn((s: unknown) => s) } }));
+vi.mock('chalk', () => ({
+  default: { redBright: vi.fn((s: unknown) => s), dim: vi.fn((s: unknown) => s) },
+}));
 
 const mockRecord: Record = {
   uuid: 'abc-123',
@@ -30,6 +32,7 @@ describe('index', () => {
     process.argv = ['node', 'index.js'];
     process.exitCode = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -108,6 +111,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue(undefined);
 
     await import('@/index.js');
@@ -118,6 +122,9 @@ describe('index', () => {
     expect(mockSpinner.success).toHaveBeenCalledWith('Fetched 1 records!');
     expect(mockSpinner.start).toHaveBeenCalledWith('Writing records...');
     expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('/mock/output/test-title.md'),
+    );
     expect(mockSpinner.start).toHaveBeenCalledWith('Deleting records...');
     expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
   });
@@ -130,6 +137,9 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(writeMarkdown)
+      .mockReturnValueOnce('/mock/output/test-title.md')
+      .mockReturnValueOnce('/mock/output/title-2.md');
     vi.mocked(deleteRecords).mockResolvedValue(undefined);
 
     await import('@/index.js');
@@ -138,6 +148,12 @@ describe('index', () => {
     expect(writeMarkdown).toHaveBeenCalledTimes(2);
     expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 0, records);
     expect(writeMarkdown).toHaveBeenCalledWith(mockRecord2, 1, records);
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('/mock/output/test-title.md'),
+    );
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('/mock/output/title-2.md'),
+    );
     expect(deleteRecords).toHaveBeenCalledWith(['abc-123', 'def-456']);
   });
 
