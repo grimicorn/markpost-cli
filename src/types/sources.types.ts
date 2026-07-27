@@ -31,6 +31,13 @@ export type CreateSourceInput = {
   provider?: string;
 };
 
+// Mirrors markpost's PATCH /api/sources/[uuid] payload, which only accepts
+// routeFolder and fieldMapping updates.
+export type UpdateSourceInput = {
+  routeFolder?: string;
+  fieldMapping?: unknown;
+};
+
 // The JSON:API resource object markpost's `sourceSerializer`
 // (`server/utils/response.ts`) actually produces for a source: `attributes`
 // plus the `type`/`id`/`links` envelope fields the old `ApiData` type dropped.

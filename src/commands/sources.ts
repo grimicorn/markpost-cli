@@ -1,6 +1,11 @@
 import chalk from 'chalk';
 import { input, select } from '@inquirer/prompts';
-import { createSource, deleteSource, fetchSources } from '@/libs/sources.js';
+import {
+  createSource,
+  deleteSource,
+  fetchSources,
+  updateSource,
+} from '@/libs/sources.js';
 import { checkConfig } from '@/libs/config.js';
 import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 
@@ -10,10 +15,11 @@ import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 const WEBHOOK_INGEST_BASE = 'https://ingest.markpost.io/v1/hooks';
 const EMAIL_DOMAIN = 'in.markpost.io';
 
-const USAGE = `Usage: markpost sources <list|create|delete> [uuid]
+const USAGE = `Usage: markpost sources <list|create|update|delete> [uuid]
 
   list           List all sources
   create         Create a new source (prompts for details)
+  update [uuid]  Update a source's route folder; prompts to pick one if uuid is omitted
   delete [uuid]  Delete a source; prompts to pick one if uuid is omitted`;
 
 export const buildEndpointUrl = (
@@ -40,6 +46,11 @@ export const runSourcesCommand = async (args: string[]): Promise<void> => {
 
     if (subcommand === 'create') {
       await createSourceCommand();
+      return;
+    }
+
+    if (subcommand === 'update') {
+      await updateSourceCommand(uuid);
       return;
     }
 
@@ -107,16 +118,18 @@ const createSourceCommand = async (): Promise<void> => {
   printSource(source);
 };
 
-const promptForSourceToDelete = async (): Promise<Source | null> => {
+// Shared by update and delete: list existing sources and let the user pick
+// one, or report there's nothing to act on.
+const promptForSource = async (action: string): Promise<Source | null> => {
   const sources = await fetchSources();
 
   if (sources.length === 0) {
-    console.log('No sources to delete.');
+    console.log(`No sources to ${action}.`);
     return null;
   }
 
   const selectedUuid = await select({
-    message: 'Select a source to delete',
+    message: `Select a source to ${action}`,
     choices: sources.map((source) => ({
       name: `${source.name} (${source.type})`,
       value: source.uuid,
@@ -126,8 +139,68 @@ const promptForSourceToDelete = async (): Promise<Source | null> => {
   return sources.find((source) => source.uuid === selectedUuid) ?? null;
 };
 
+const findSourceByUuid = async (uuid: string): Promise<Source | null> => {
+  const sources = await fetchSources();
+  const source = sources.find((candidate) => candidate.uuid === uuid);
+
+  if (source) {
+    return source;
+  }
+
+  // fetchSources() swallows transport errors and returns [], so a uuid that
+  // doesn't match is indistinguishable here from a failed lookup.
+  console.error(
+    chalk.redBright(
+      'Source not found, or the source list could not be loaded.',
+    ),
+  );
+
+  return null;
+};
+
+const promptAndApplyRouteFolder = async (target: Source): Promise<void> => {
+  const routeFolder = (
+    await input({
+      message: 'Route folder (e.g. 99-incoming/)',
+      default: target.routeFolder,
+    })
+  ).trim();
+
+  if (!routeFolder) {
+    console.error(chalk.redBright('Route folder cannot be empty.'));
+    return;
+  }
+
+  if (routeFolder === target.routeFolder) {
+    console.log('Route folder unchanged.');
+    return;
+  }
+
+  const source = await updateSource(target.uuid, { routeFolder });
+
+  if (!source) {
+    console.error(chalk.redBright('Failed to update source.'));
+    return;
+  }
+
+  console.log(chalk.greenBright(`Updated source "${source.name}"`));
+  printSource(source);
+};
+
+const updateSourceCommand = async (uuid?: string): Promise<void> => {
+  const target = uuid
+    ? await findSourceByUuid(uuid)
+    : await promptForSource('update');
+
+  if (!target) {
+    return;
+  }
+
+  await promptAndApplyRouteFolder(target);
+};
+
 const deleteSourceCommand = async (uuid?: string): Promise<void> => {
-  const targetUuid = uuid ?? (await promptForSourceToDelete())?.uuid;
+  const targetUuid = uuid ?? (await promptForSource('delete'))?.uuid;
 
   if (!targetUuid) {
     return;
