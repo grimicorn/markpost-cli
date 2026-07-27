@@ -5,27 +5,34 @@ import { writeMarkdown } from '@/libs/markdown.js';
 import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
 import { runSourcesCommand } from '@/commands/sources.js';
+import { runRecordsCommand } from '@/commands/records.js';
 import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
 
 const [command, ...commandArgs] = process.argv.slice(2);
-const KNOWN_COMMANDS = ['push', 'get', 'sources'];
 
-if (command === 'push') {
-  await runPushCommand(commandArgs);
+// One source of truth for dispatch: adding a command here is enough, unlike
+// a parallel list of `if (command === 'x')` blocks plus a separately
+// maintained "known commands" array that can drift out of sync.
+// A Map (rather than a plain object) means a command named "toString" or
+// "constructor" can't accidentally resolve to an inherited Object.prototype
+// member instead of falling through to the "unknown command" branch.
+const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
+  ['push', runPushCommand],
+  ['get', runGetCommand],
+  ['sources', runSourcesCommand],
+  ['records', runRecordsCommand],
+]);
+
+const commandHandler = COMMAND_HANDLERS.get(command);
+
+if (commandHandler) {
+  await commandHandler(commandArgs);
 }
 
-if (command === 'get') {
-  await runGetCommand(commandArgs);
-}
-
-if (command === 'sources') {
-  await runSourcesCommand(commandArgs);
-}
-
-if (command && !KNOWN_COMMANDS.includes(command)) {
+if (command && !commandHandler) {
   console.error(chalk.redBright(`Unknown command: ${command}`));
   process.exitCode = 1;
 }
