@@ -124,6 +124,36 @@ describe('fetchSources', () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     expect(await fetchSources()).toEqual([]);
   });
+
+  // Regression coverage: a resource with no `attributes` at all must be
+  // skipped (not passed through as `undefined`) and the skip must be
+  // reported so it's visible instead of silently shrinking the result.
+  it('skips a resource with no attributes and reports the count', async () => {
+    mockFetch({
+      data: [{ attributes: mockSource }, { type: 'sources', id: 'x' }],
+    });
+
+    expect(await fetchSources()).toEqual([mockSource]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'fetchSources',
+      'Skipped 1 source(s) with no attributes',
+    );
+  });
+
+  // Regression coverage: `attributes: null` is off-contract but must be
+  // caught by the same skip logic as a missing `attributes` key, not passed
+  // through as a `null` element typed as a `Source`.
+  it('skips a resource with attributes explicitly null', async () => {
+    mockFetch({
+      data: [{ attributes: mockSource }, { type: 'sources', attributes: null }],
+    });
+
+    expect(await fetchSources()).toEqual([mockSource]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'fetchSources',
+      'Skipped 1 source(s) with no attributes',
+    );
+  });
 });
 
 describe('createSource', () => {

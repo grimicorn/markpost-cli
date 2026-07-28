@@ -3,6 +3,7 @@ import {
   getApiToken,
   getBaseUrl,
   unwrapResourceAttributes,
+  unwrapResourceCollection,
 } from '@/libs/api.js';
 import { logErrorMessage } from '@/libs/errors.js';
 import { ApiDeleteMeta, ApiDeleteResponse } from '@/types/api.types.js';
@@ -44,19 +45,7 @@ export const fetchSources = async (): Promise<Source[]> => {
       '/api/sources',
     )) as SourceListApiResponse;
 
-    const resources = body.data ?? [];
-    const usableResources = resources.filter(
-      (resource) => resource.attributes !== undefined,
-    );
-
-    if (usableResources.length !== resources.length) {
-      logErrorMessage(
-        'fetchSources',
-        `Skipped ${resources.length - usableResources.length} source(s) with no attributes`,
-      );
-    }
-
-    return usableResources.map(({ attributes }) => attributes);
+    return unwrapResourceCollection('fetchSources', body, 'source');
   } catch (error) {
     logErrorMessage(
       'fetchSources',

@@ -3,6 +3,7 @@ import {
   getApiToken,
   getBaseUrl,
   unwrapResourceAttributes,
+  unwrapResourceCollection,
 } from '@/libs/api.js';
 import { logErrorMessage } from '@/libs/errors.js';
 import {
@@ -128,17 +129,11 @@ export const fetchPaginatedRecords = async (
 
     assertApiSuccess(response, body);
 
-    const resources = body.data ?? [];
-    const usableResources = resources.filter(
-      (resource) => resource.attributes !== undefined,
+    const records = unwrapResourceCollection(
+      'fetchPaginatedRecords',
+      body,
+      'record',
     );
-
-    if (usableResources.length !== resources.length) {
-      logErrorMessage(
-        'fetchPaginatedRecords',
-        `Skipped ${resources.length - usableResources.length} record(s) with no attributes`,
-      );
-    }
 
     // `meta`/`links` fall back to conservative defaults, field by field
     // (rather than an unchecked cast of a possibly-partial object), if a
@@ -147,13 +142,13 @@ export const fetchPaginatedRecords = async (
     // or looping forever chasing a cursor that was never there.
     const rawMeta = body.meta as Partial<PaginatedRecordsMeta> | undefined;
     const meta: PaginatedRecordsMeta = {
-      total: rawMeta?.total ?? usableResources.length,
+      total: rawMeta?.total ?? records.length,
       size: rawMeta?.size ?? size,
       hasMore: rawMeta?.hasMore ?? false,
     };
 
     return {
-      records: usableResources.map(({ attributes }) => attributes),
+      records,
       meta,
       links: (body.links as ApiPaginationLinks | undefined) ?? {
         next: null,

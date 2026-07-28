@@ -1,5 +1,6 @@
 import { config } from '@/libs/config.js';
 import { ApiError, ApiErrorEnvelope, ApiResponse } from '@/types/api.types.js';
+import { logErrorMessage } from '@/libs/errors.js';
 
 export const getBaseUrl = () => {
   return process.env.BASE_URL ?? 'https://sync.danholloran.me';
@@ -57,3 +58,31 @@ export const unwrapResourceAttributes = <
 >(
   body: ApiResponse<TResource | null>,
 ): TResource['attributes'] | null => body.data?.attributes ?? null;
+
+// Reads the `attributes` off every resource in a list-success response,
+// dropping (and loudly logging) any resource that's off-contract — no
+// `attributes` at all, or `attributes` explicitly `null`. `!= null` catches
+// both in one check. `context` identifies the caller in the log line (e.g.
+// `fetchPaginatedRecords`, `fetchSources`) so a skip is traceable back to
+// the request that produced it.
+export const unwrapResourceCollection = <
+  TResource extends { attributes: unknown },
+>(
+  context: string,
+  body: ApiResponse<TResource[]>,
+  label: string,
+): TResource['attributes'][] => {
+  const resources = body.data ?? [];
+  const usableResources = resources.filter(
+    (resource) => resource?.attributes != null,
+  );
+
+  if (usableResources.length !== resources.length) {
+    logErrorMessage(
+      context,
+      `Skipped ${resources.length - usableResources.length} ${label}(s) with no attributes`,
+    );
+  }
+
+  return usableResources.map(({ attributes }) => attributes);
+};

@@ -26,6 +26,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 
 const MARKPOST_REPO_URL = 'https://github.com/grimicorn/markpost';
 const CONTRACT_RELATIVE_PATH = 'server/types/api.types.ts';
@@ -55,20 +56,22 @@ const VENDOR_FILE_HEADER = `// GENERATED FILE — do not hand-edit.
 // Accepts both `--from <path>` and `--from=<path>`. A typo'd flag (e.g.
 // `--form`) must fail loudly rather than silently falling through to a
 // network clone that overwrites the vendored file from upstream `main`
-// instead of the checkout the caller actually meant.
+// instead of the checkout the caller actually meant. This check runs
+// unconditionally (not just on the no-`--from` path) so `--from ../markpost
+// --dry-run` doesn't silently ignore the typo'd `--dry-run` and proceed.
 function parseFromPathArg(argv) {
+  const unrecognizedFlags = argv.filter(
+    (argument) => argument.startsWith('--') && !argument.startsWith('--from'),
+  );
+
+  if (unrecognizedFlags.length > 0) {
+    throw new Error(`Unrecognized option(s): ${unrecognizedFlags.join(', ')}`);
+  }
+
   const equalsFlag = argv.find((argument) => argument.startsWith('--from='));
   const spaceFlagIndex = argv.indexOf('--from');
 
   if (!equalsFlag && spaceFlagIndex === -1) {
-    const unrecognizedFlags = argv.filter((argument) =>
-      argument.startsWith('--'),
-    );
-
-    if (unrecognizedFlags.length > 0) {
-      throw new Error(`Unrecognized option(s): ${unrecognizedFlags.join(', ')}`);
-    }
-
     return undefined;
   }
 
@@ -110,11 +113,31 @@ function assertContractIsCommitted(checkoutDir) {
   );
 }
 
+// The commit that actually last touched the contract file, not just
+// whatever HEAD happens to be — keeps the manifest diff stable across
+// upstream commits that don't touch `server/types/api.types.ts`.
 function readCommitHash(checkoutDir) {
-  return execFileSync('git', ['rev-parse', 'HEAD'], {
-    cwd: checkoutDir,
-    encoding: 'utf-8',
-  }).trim();
+  return execFileSync(
+    'git',
+    ['log', '-1', '--format=%H', '--', CONTRACT_RELATIVE_PATH],
+    { cwd: checkoutDir, encoding: 'utf-8' },
+  ).trim();
+}
+
+// Resolves the checkout's real `origin` remote so a `--from` sync against a
+// fork or a local branch records provenance the manifest can actually be
+// verified against, instead of hardcoding `grimicorn/markpost` for a commit
+// that may not exist there. Falls back to the absolute local path when the
+// checkout has no `origin` remote (e.g. a bare local clone).
+function resolveSourceRepo(checkoutDir) {
+  try {
+    return execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: checkoutDir,
+      encoding: 'utf-8',
+    }).trim();
+  } catch {
+    return checkoutDir;
+  }
 }
 
 function readContractSource(checkoutDir) {
@@ -129,14 +152,62 @@ function readContractSource(checkoutDir) {
   return readFileSync(contractSourcePath, 'utf-8');
 }
 
+// The vendored file gets compiled straight into the published CLI's `dist`,
+// so nothing today stops a future runtime statement or side-effecting
+// import in markpost's contract file from riding along silently — the diff
+// review is the only guard, and it's human. Refuse to vendor anything but
+// type-only declarations (type aliases, interfaces, and the `import type`s
+// they depend on) so that gap fails loudly at sync time instead.
+function assertContractIsTypeOnly(contractSource) {
+  // `setParentNodes: true` so each statement's `.getStart()` below can
+  // resolve its position without needing the source file passed explicitly.
+  const sourceFile = ts.createSourceFile(
+    CONTRACT_RELATIVE_PATH,
+    contractSource,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS,
+  );
+
+  const runtimeStatements = sourceFile.statements.filter((statement) => {
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement)
+    ) {
+      return false;
+    }
+
+    if (ts.isImportDeclaration(statement)) {
+      return !statement.importClause?.isTypeOnly;
+    }
+
+    return true;
+  });
+
+  if (runtimeStatements.length > 0) {
+    throw new Error(
+      `${CONTRACT_RELATIVE_PATH} contains non-type declaration(s) at line(s) ` +
+        `${runtimeStatements
+          .map(
+            (statement) =>
+              sourceFile.getLineAndCharacterOfPosition(statement.getStart())
+                .line + 1,
+          )
+          .join(', ')} — refusing to vendor a file that isn't type-only`,
+    );
+  }
+}
+
 function writeVendoredContract(contractSource) {
+  assertContractIsTypeOnly(contractSource);
+
   mkdirSync(VENDOR_DIR, { recursive: true });
   writeFileSync(VENDOR_FILE, `${VENDOR_FILE_HEADER}${contractSource}`);
 }
 
-function writeManifest(sourceCommit) {
+function writeManifest(sourceRepo, sourceCommit) {
   const manifest = {
-    sourceRepo: MARKPOST_REPO_URL,
+    sourceRepo,
     sourceFile: CONTRACT_RELATIVE_PATH,
     sourceCommit,
     syncedAt: new Date().toISOString(),
@@ -158,9 +229,10 @@ function syncFrom(checkoutDir) {
 
   assertContractIsCommitted(checkoutDir);
   const sourceCommit = readCommitHash(checkoutDir);
+  const sourceRepo = resolveSourceRepo(checkoutDir);
 
   writeVendoredContract(contractSource);
-  writeManifest(sourceCommit);
+  writeManifest(sourceRepo, sourceCommit);
 }
 
 function main() {
@@ -190,4 +262,12 @@ function main() {
   }
 }
 
-main();
+// Only run when executed directly (`node scripts/sync-contract.mjs` /
+// `npm run sync:contract`), not when imported — this module is imported by
+// tests/scripts/sync-contract.test.ts to unit-test the pure parsing and
+// validation logic below without touching the network.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
+
+export { assertContractIsTypeOnly, parseFromPathArg };

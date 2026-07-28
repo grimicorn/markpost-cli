@@ -502,6 +502,46 @@ describe('fetchPaginatedRecords', () => {
       links: { next: null, prev: null },
     });
   });
+
+  // Regression coverage: a resource with no `attributes` at all must be
+  // skipped (not passed through as `undefined`) and the skip must be
+  // reported so it's visible instead of silently shrinking the result.
+  it('skips a resource with no attributes and reports the count', async () => {
+    mockFetch({
+      data: [{ attributes: mockRecord }, { type: 'records', id: 'x' }],
+      meta: { total: 2, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+
+    expect(await fetchPaginatedRecords()).toEqual({
+      records: [mockRecord],
+      meta: { total: 2, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Skipped 1 record(s) with no attributes'),
+    );
+  });
+
+  // Regression coverage: `attributes: null` is off-contract but must be
+  // caught by the same skip logic as a missing `attributes` key, not passed
+  // through as a `null` element typed as a `Record`.
+  it('skips a resource with attributes explicitly null', async () => {
+    mockFetch({
+      data: [{ attributes: mockRecord }, { type: 'records', attributes: null }],
+      meta: { total: 2, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+
+    expect(await fetchPaginatedRecords()).toEqual({
+      records: [mockRecord],
+      meta: { total: 2, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Skipped 1 record(s) with no attributes'),
+    );
+  });
 });
 
 describe('createRecord', () => {
