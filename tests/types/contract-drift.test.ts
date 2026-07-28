@@ -10,6 +10,11 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 
+import {
+  assertContractIsTypeOnly,
+  // @ts-expect-error -- plain .mjs, not part of the typed src/ tree.
+} from '../../scripts/sync-contract.mjs';
+
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const TSCONFIG_PATH = fileURLToPath(
   new URL('../../tsconfig.json', import.meta.url),
@@ -131,6 +136,17 @@ describe('markpost contract drift', () => {
     expect(actualExports).toEqual(
       expect.arrayContaining(EXPECTED_VENDORED_EXPORTS),
     );
+  });
+
+  // `assertContractIsTypeOnly` only actually guards the CLI's shipped `dist`
+  // if it's checked against the file that ships, not just synthetic strings
+  // in tests/scripts/sync-contract.test.ts — a hand-edit, a bad merge, or a
+  // copy vendored before this guard existed would otherwise put executable
+  // code into the published CLI with only a human diff read to catch it.
+  it('the committed vendored contract contains no runtime statements', () => {
+    const vendorSource = readFileSync(VENDOR_CONTRACT_PATH, 'utf-8');
+
+    expect(() => assertContractIsTypeOnly(vendorSource)).not.toThrow();
   });
 
   // A full-project compile is slower than vitest's 5s default test timeout,

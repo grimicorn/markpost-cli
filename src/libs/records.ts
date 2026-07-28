@@ -140,21 +140,26 @@ export const fetchPaginatedRecords = async (
     // response is ever malformed: `hasMore: false` and `next: null` both
     // stop pagination instead of the caller crashing on `undefined.hasMore`
     // or looping forever chasing a cursor that was never there.
+    //
+    // `total` falls back to the pre-filter resource count (not
+    // `records.length`, which has already dropped any unusable resources) —
+    // when `meta` is also missing, the fallback should still describe how
+    // many resources the server actually sent, not how many survived the
+    // attributes check.
+    const resourceCount = (body.data ?? []).length;
     const rawMeta = body.meta as Partial<PaginatedRecordsMeta> | undefined;
     const meta: PaginatedRecordsMeta = {
-      total: rawMeta?.total ?? records.length,
+      total: rawMeta?.total ?? resourceCount,
       size: rawMeta?.size ?? size,
       hasMore: rawMeta?.hasMore ?? false,
     };
-
-    return {
-      records,
-      meta,
-      links: (body.links as ApiPaginationLinks | undefined) ?? {
-        next: null,
-        prev: null,
-      },
+    const rawLinks = body.links as Partial<ApiPaginationLinks> | undefined;
+    const links: ApiPaginationLinks = {
+      next: rawLinks?.next ?? null,
+      prev: rawLinks?.prev ?? null,
     };
+
+    return { records, meta, links };
   } catch (error) {
     logErrorMessage(
       `fetchPaginatedRecords`,

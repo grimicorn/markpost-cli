@@ -24,8 +24,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 const MARKPOST_REPO_URL = 'https://github.com/grimicorn/markpost';
@@ -54,22 +54,32 @@ const VENDOR_FILE_HEADER = `// GENERATED FILE — do not hand-edit.
 `;
 
 // Accepts both `--from <path>` and `--from=<path>`. A typo'd flag (e.g.
-// `--form`) must fail loudly rather than silently falling through to a
-// network clone that overwrites the vendored file from upstream `main`
-// instead of the checkout the caller actually meant. This check runs
-// unconditionally (not just on the no-`--from` path) so `--from ../markpost
-// --dry-run` doesn't silently ignore the typo'd `--dry-run` and proceed.
+// `--form`, or a near-miss like `--fromage`) must fail loudly rather than
+// silently falling through to a network clone that overwrites the vendored
+// file from upstream `main` instead of the checkout the caller actually
+// meant, so this whitelists the exact `--from`/`--from=<path>` tokens (and
+// the path value immediately after a bare `--from`) rather than anything
+// merely prefixed with `--from`. This check runs unconditionally (not just
+// on the no-`--from` path) so `--from ../markpost --dry-run` doesn't
+// silently ignore the typo'd `--dry-run` and proceed.
 function parseFromPathArg(argv) {
-  const unrecognizedFlags = argv.filter(
-    (argument) => argument.startsWith('--') && !argument.startsWith('--from'),
+  const spaceFlagIndex = argv.indexOf('--from');
+  // The index directly after a bare `--from` is its path value, not a
+  // separate argument to validate — but only when `--from` is actually
+  // present (`-1 + 1 === 0` would otherwise wrongly exempt argv[0]).
+  const pathValueIndex = spaceFlagIndex === -1 ? undefined : spaceFlagIndex + 1;
+  const unrecognized = argv.filter(
+    (argument, index) =>
+      argument !== '--from' &&
+      !argument.startsWith('--from=') &&
+      index !== pathValueIndex,
   );
 
-  if (unrecognizedFlags.length > 0) {
-    throw new Error(`Unrecognized option(s): ${unrecognizedFlags.join(', ')}`);
+  if (unrecognized.length > 0) {
+    throw new Error(`Unrecognized argument(s): ${unrecognized.join(', ')}`);
   }
 
   const equalsFlag = argv.find((argument) => argument.startsWith('--from='));
-  const spaceFlagIndex = argv.indexOf('--from');
 
   if (!equalsFlag && spaceFlagIndex === -1) {
     return undefined;
@@ -136,7 +146,7 @@ function resolveSourceRepo(checkoutDir) {
       encoding: 'utf-8',
     }).trim();
   } catch {
-    return checkoutDir;
+    return resolve(checkoutDir);
   }
 }
 
@@ -152,12 +162,41 @@ function readContractSource(checkoutDir) {
   return readFileSync(contractSourcePath, 'utf-8');
 }
 
+// True for an `import` statement that carries no runtime value: either the
+// whole clause is `import type ...`, or (for a named-imports clause) every
+// individual specifier carries its own inline `type` modifier, e.g.
+// `import { type Foo } from './shared'`.
+function isTypeOnlyImport(statement) {
+  const importClause = statement.importClause;
+
+  // A bare `import './shared';` has no clause at all — it's a
+  // side-effecting import by definition, never type-only.
+  if (!importClause) {
+    return false;
+  }
+
+  if (importClause.isTypeOnly) {
+    return true;
+  }
+
+  if (
+    importClause.namedBindings &&
+    ts.isNamedImports(importClause.namedBindings)
+  ) {
+    return importClause.namedBindings.elements.every(
+      (element) => element.isTypeOnly,
+    );
+  }
+
+  return false;
+}
+
 // The vendored file gets compiled straight into the published CLI's `dist`,
 // so nothing today stops a future runtime statement or side-effecting
 // import in markpost's contract file from riding along silently — the diff
 // review is the only guard, and it's human. Refuse to vendor anything but
-// type-only declarations (type aliases, interfaces, and the `import type`s
-// they depend on) so that gap fails loudly at sync time instead.
+// type-only declarations (type aliases, interfaces, type-only imports and
+// re-exports) so that gap fails loudly at sync time instead.
 function assertContractIsTypeOnly(contractSource) {
   // `setParentNodes: true` so each statement's `.getStart()` below can
   // resolve its position without needing the source file passed explicitly.
@@ -178,7 +217,14 @@ function assertContractIsTypeOnly(contractSource) {
     }
 
     if (ts.isImportDeclaration(statement)) {
-      return !statement.importClause?.isTypeOnly;
+      return !isTypeOnlyImport(statement);
+    }
+
+    // `export type { Foo } from './shared'` and `export * from './shared'`
+    // (with `isTypeOnly` set) are both fully erased at compile time, same
+    // as a type-only import.
+    if (ts.isExportDeclaration(statement)) {
+      return !statement.isTypeOnly;
     }
 
     return true;
@@ -265,8 +311,11 @@ function main() {
 // Only run when executed directly (`node scripts/sync-contract.mjs` /
 // `npm run sync:contract`), not when imported — this module is imported by
 // tests/scripts/sync-contract.test.ts to unit-test the pure parsing and
-// validation logic below without touching the network.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// validation logic below without touching the network. `pathToFileURL`
+// (rather than a raw `file://` template) percent-encodes `process.argv[1]`
+// the same way `import.meta.url` already is, so this still matches on a
+// checkout path containing a space or other reserved character.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main();
 }
 

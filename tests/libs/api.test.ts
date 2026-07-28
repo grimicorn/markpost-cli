@@ -6,11 +6,17 @@ import {
   getApiToken,
   getBaseUrl,
   unwrapResourceAttributes,
+  unwrapResourceCollection,
 } from '@/libs/api.js';
+import { logErrorMessage } from '@/libs/errors.js';
 import { ApiError, ApiResourceObject, ApiResponse } from '@/types/api.types.js';
 
 vi.mock('@/libs/config.js', () => ({
   config: { get: vi.fn() },
+}));
+
+vi.mock('@/libs/errors.js', () => ({
+  logErrorMessage: vi.fn(),
 }));
 
 describe('getBaseUrl', () => {
@@ -190,5 +196,77 @@ describe('unwrapResourceAttributes', () => {
     } as ApiResponse<FixtureResource | null>;
 
     expect(unwrapResourceAttributes(body)).toBeNull();
+  });
+});
+
+describe('unwrapResourceCollection', () => {
+  type FixtureAttributes = { uuid: string; title: string };
+  type FixtureResource = ApiResourceObject & {
+    type: 'fixtures';
+    attributes: FixtureAttributes;
+  };
+
+  const fixture: FixtureAttributes = { uuid: 'abc-123', title: 'Hello' };
+
+  beforeEach(() => {
+    vi.mocked(logErrorMessage).mockClear();
+  });
+
+  it('returns [] and does not log when data is missing entirely', () => {
+    const body = {} as ApiResponse<FixtureResource[]>;
+
+    expect(unwrapResourceCollection('context', body, 'fixture')).toEqual([]);
+    expect(logErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns the attributes of every usable resource', () => {
+    const body: ApiResponse<FixtureResource[]> = {
+      data: [
+        { type: 'fixtures', id: 'abc-123', attributes: fixture },
+        { type: 'fixtures', id: 'def-456', attributes: { ...fixture, uuid: 'def-456' } },
+      ],
+    };
+
+    expect(unwrapResourceCollection('context', body, 'fixture')).toEqual([
+      fixture,
+      { ...fixture, uuid: 'def-456' },
+    ]);
+    expect(logErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('drops a resource with attributes explicitly null and logs the skip', () => {
+    const body = {
+      data: [
+        { type: 'fixtures', id: 'abc-123', attributes: fixture },
+        { type: 'fixtures', id: 'def-456', attributes: null },
+      ],
+    } as unknown as ApiResponse<FixtureResource[]>;
+
+    expect(unwrapResourceCollection('myContext', body, 'fixture')).toEqual([
+      fixture,
+    ]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'myContext',
+      'Skipped 1 fixture(s) with no attributes',
+    );
+  });
+
+  // The everything-dropped path matters most: it still returns successfully
+  // (an empty array, not a thrown error), so the only signal something's
+  // wrong is the logged skip count — this must not silently look identical
+  // to "the server legitimately returned zero resources".
+  it('drops every resource and logs the full count when none are usable', () => {
+    const body = {
+      data: [
+        { type: 'fixtures', id: 'abc-123' },
+        { type: 'fixtures', id: 'def-456', attributes: null },
+      ],
+    } as unknown as ApiResponse<FixtureResource[]>;
+
+    expect(unwrapResourceCollection('myContext', body, 'fixture')).toEqual([]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'myContext',
+      'Skipped 2 fixture(s) with no attributes',
+    );
   });
 });

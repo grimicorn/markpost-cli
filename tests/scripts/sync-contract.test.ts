@@ -58,7 +58,7 @@ describe('parseFromPathArg', () => {
 
   it('throws on an unrecognized flag', () => {
     expect(() => parseFromPathArg(['--dry-run'])).toThrow(
-      'Unrecognized option(s): --dry-run',
+      'Unrecognized argument(s): --dry-run',
     );
   });
 
@@ -70,10 +70,28 @@ describe('parseFromPathArg', () => {
     try {
       expect(() =>
         parseFromPathArg(['--from', existingPath, '--dry-run']),
-      ).toThrow('Unrecognized option(s): --dry-run');
+      ).toThrow('Unrecognized argument(s): --dry-run');
     } finally {
       rmSync(existingPath, { recursive: true, force: true });
     }
+  });
+
+  // Regression coverage: a near-miss on the flag name must not be treated
+  // as `--from` just because it shares the prefix — a loose prefix check
+  // would silently fall through to the network-clone path instead of
+  // failing on the typo.
+  it('throws on a near-miss flag name instead of silently ignoring it', () => {
+    expect(() => parseFromPathArg(['--fromm', '/tmp'])).toThrow(
+      'Unrecognized argument(s): --fromm, /tmp',
+    );
+  });
+
+  // Regression coverage: a bare positional path (no `--from` flag at all)
+  // must fail loudly rather than being silently ignored.
+  it('throws on a bare positional argument', () => {
+    expect(() => parseFromPathArg(['../markpost'])).toThrow(
+      'Unrecognized argument(s): ../markpost',
+    );
   });
 });
 
@@ -86,6 +104,40 @@ describe('assertContractIsTypeOnly', () => {
         export interface ApiResourceObject { type: string; }
       `),
     ).not.toThrow();
+  });
+
+  it('accepts an inline type-only import specifier', () => {
+    expect(() =>
+      assertContractIsTypeOnly(`
+        import { type Foo } from './foo';
+        export type ApiError = { status: string; foo: Foo };
+      `),
+    ).not.toThrow();
+  });
+
+  it('accepts a type-only re-export', () => {
+    expect(() =>
+      assertContractIsTypeOnly(`
+        export type { Foo } from './foo';
+      `),
+    ).not.toThrow();
+  });
+
+  it('rejects a named import with a mix of type-only and value specifiers', () => {
+    expect(() =>
+      assertContractIsTypeOnly(`
+        import { type Foo, readFileSync } from './foo';
+        export type ApiError = { status: string; foo: Foo };
+      `),
+    ).toThrow(/non-type declaration/);
+  });
+
+  it('rejects a non-type-only re-export', () => {
+    expect(() =>
+      assertContractIsTypeOnly(`
+        export { helper } from './foo';
+      `),
+    ).toThrow(/non-type declaration/);
   });
 
   it('rejects a runtime statement, e.g. a value export', () => {
