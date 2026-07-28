@@ -24,6 +24,16 @@ export const formatErrorMessages = (errors: ApiError[]) => {
   return 'Unknown error occurred';
 };
 
+// An off-contract body can send `errors` as something other than an array
+// (an object, a string, `null`) — spreading that directly would throw
+// `TypeError: ... is not iterable` out of `assertApiSuccess` and surface a
+// JS internals message instead of the server's actual error detail (or, for
+// a string, spread into per-character entries and format as garbage).
+// Falling back to `[]` for anything non-array keeps the "no errors present"
+// path honest without crashing on a malformed field.
+const toErrorArray = (value: unknown): ApiError[] =>
+  Array.isArray(value) ? value : [];
+
 // Every error response the API sends back is a non-2xx status carrying
 // `data.errors`, regardless of whether the success shape is a single
 // resource or a list; markpost's declared contract also allows a top-level
@@ -36,8 +46,8 @@ export const assertApiSuccess = (response: Response, body: unknown): void => {
   // `??` would let a present-but-empty `data.errors: []` mask a populated
   // top-level `errors`, silently passing a body that carries both.
   const errors = [
-    ...(envelope?.data?.errors ?? []),
-    ...(envelope?.errors ?? []),
+    ...toErrorArray(envelope?.data?.errors),
+    ...toErrorArray(envelope?.errors),
   ];
   const hasErrors = errors.length > 0;
 

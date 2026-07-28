@@ -79,6 +79,17 @@ function parseFromPathArg(argv) {
     throw new Error(`Unrecognized argument(s): ${unrecognized.join(', ')}`);
   }
 
+  // A duplicated `--from` (either form, or a mix of both) must not silently
+  // pick one occurrence and drop the other — that's the same
+  // wrong-checkout-gets-vendored risk the whitelist above exists to prevent.
+  const fromOccurrences = argv.filter(
+    (argument) => argument === '--from' || argument.startsWith('--from='),
+  ).length;
+
+  if (fromOccurrences > 1) {
+    throw new Error('--from may only be given once');
+  }
+
   const equalsFlag = argv.find((argument) => argument.startsWith('--from='));
 
   if (!equalsFlag && spaceFlagIndex === -1) {
@@ -125,13 +136,26 @@ function assertContractIsCommitted(checkoutDir) {
 
 // The commit that actually last touched the contract file, not just
 // whatever HEAD happens to be — keeps the manifest diff stable across
-// upstream commits that don't touch `server/types/api.types.ts`.
+// upstream commits that don't touch `server/types/api.types.ts`. `git log`
+// exits 0 with empty stdout when the path has no commits in this checkout
+// (e.g. the file is present but git-ignored, or this isn't the checkout's
+// repo root) — that's exactly the case the manifest's provenance claim
+// needs to fail on, not silently record as `sourceCommit: ""`.
 function readCommitHash(checkoutDir) {
-  return execFileSync(
+  const commitHash = execFileSync(
     'git',
     ['log', '-1', '--format=%H', '--', CONTRACT_RELATIVE_PATH],
     { cwd: checkoutDir, encoding: 'utf-8' },
   ).trim();
+
+  if (!commitHash) {
+    throw new Error(
+      `No commit history found for ${CONTRACT_RELATIVE_PATH} in ${checkoutDir} — ` +
+        'is this a markpost git checkout?',
+    );
+  }
+
+  return commitHash;
 }
 
 // Resolves the checkout's real `origin` remote so a `--from` sync against a
@@ -177,6 +201,14 @@ function isTypeOnlyImport(statement) {
 
   if (importClause.isTypeOnly) {
     return true;
+  }
+
+  // A default binding (`import Foo, { type Bar } from ...`) is always a
+  // runtime value, regardless of whether every *named* specifier alongside
+  // it is type-only — check this before the named-bindings branch below, or
+  // `Foo` slips through as long as `Bar` carries an inline `type` modifier.
+  if (importClause.name) {
+    return false;
   }
 
   if (

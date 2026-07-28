@@ -160,6 +160,18 @@ describe('assertApiSuccess', () => {
       'Conflict: Duplicate record',
     );
   });
+
+  // Regression coverage: an off-contract, non-array `errors` field (an
+  // object here, but a string has the same problem) must not throw a raw
+  // `TypeError` out of the spread — it degrades to "no errors present"
+  // instead, and `!response.ok` still surfaces "Unknown error occurred".
+  it('does not throw a TypeError when data.errors is not an array', () => {
+    const body = { data: { errors: { detail: 'not an array' } } };
+
+    expect(() => assertApiSuccess({ ok: false } as Response, body)).toThrow(
+      'Unknown error occurred',
+    );
+  });
 });
 
 describe('unwrapResourceAttributes', () => {

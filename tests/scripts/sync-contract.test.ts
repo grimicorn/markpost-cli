@@ -93,6 +93,16 @@ describe('parseFromPathArg', () => {
       'Unrecognized argument(s): ../markpost',
     );
   });
+
+  // Regression coverage: mixing both forms must not silently pick the
+  // `--from=` value and drop the space-form value (or vice versa) — that's
+  // exactly the "wrong checkout gets vendored" risk this parser guards
+  // against everywhere else.
+  it('throws when --from is given twice, even across both forms', () => {
+    expect(() =>
+      parseFromPathArg(['--from=/a', '--from', '/b']),
+    ).toThrow('--from may only be given once');
+  });
 });
 
 describe('assertContractIsTypeOnly', () => {
@@ -136,6 +146,17 @@ describe('assertContractIsTypeOnly', () => {
     expect(() =>
       assertContractIsTypeOnly(`
         export { helper } from './foo';
+      `),
+    ).toThrow(/non-type declaration/);
+  });
+
+  // Regression coverage: a default binding is always a runtime value, even
+  // when every named specifier alongside it is individually type-only.
+  it('rejects a default import mixed with type-only named specifiers', () => {
+    expect(() =>
+      assertContractIsTypeOnly(`
+        import Foo, { type Bar } from './foo';
+        export type ApiError = { status: string; bar: Bar };
       `),
     ).toThrow(/non-type declaration/);
   });
