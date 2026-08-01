@@ -1,27 +1,25 @@
-import { formatErrorMessages, getApiToken, getBaseUrl } from '@/libs/api.js';
-import { logErrorMessage } from '@/libs/errors.js';
 import {
-  ApiDeleteMeta,
-  ApiError,
-  ApiListResponse,
-  ApiResponse,
-} from '@/types/api.types.js';
+  assertApiSuccess,
+  getApiToken,
+  getBaseUrl,
+  unwrapResourceAttributes,
+  unwrapResourceCollection,
+} from '@/libs/api.js';
+import { logErrorMessage } from '@/libs/errors.js';
+import { ApiDeleteMeta, ApiDeleteResponse } from '@/types/api.types.js';
 import {
   CreateSourceInput,
   Source,
+  SourceApiResponse,
+  SourceListApiResponse,
   UpdateSourceInput,
 } from '@/types/sources.types.js';
 
-// The server always responds with `{ data: { errors } }` on failure,
-// regardless of endpoint, even where the success shape's `data` is an
-// array (e.g. the sources list). This narrow type reads just that error
-// shape off a response body of unknown success shape.
-type ApiErrorBody = { data?: { errors?: ApiError[] } };
-
 // Single seam for talking to the sources API: attaches auth, throws with
-// the server's real error detail on failure, otherwise returns the parsed
-// body for the caller to read in whatever shape (list, single, meta) it
-// expects.
+// the server's real error detail on failure (via `assertApiSuccess`, so a
+// 2xx response that still carries `errors` is caught here too, not just a
+// non-2xx status), otherwise returns the parsed body for the caller to read
+// in whatever shape (list, single, meta) it expects.
 const authedSourcesRequest = async (
   path: string,
   init: RequestInit = {},
@@ -36,10 +34,7 @@ const authedSourcesRequest = async (
 
   const body = await response.json();
 
-  if (!response.ok) {
-    const errorBody = body as ApiErrorBody;
-    throw new Error(formatErrorMessages(errorBody.data?.errors ?? []));
-  }
+  assertApiSuccess(response, body);
 
   return body;
 };
@@ -48,9 +43,9 @@ export const fetchSources = async (): Promise<Source[]> => {
   try {
     const body = (await authedSourcesRequest(
       '/api/sources',
-    )) as ApiListResponse;
+    )) as SourceListApiResponse;
 
-    return (body.data ?? []).map(({ attributes }) => attributes) as Source[];
+    return unwrapResourceCollection('fetchSources', body, 'source');
   } catch (error) {
     logErrorMessage(
       'fetchSources',
@@ -76,9 +71,9 @@ export const createSource = async (
           attributes: input,
         },
       }),
-    })) as ApiResponse;
+    })) as SourceApiResponse;
 
-    return body.data?.attributes ? (body.data.attributes as Source) : null;
+    return unwrapResourceAttributes(body);
   } catch (error) {
     logErrorMessage(
       `createSource["${input.name}"]`,
@@ -108,9 +103,9 @@ export const updateSource = async (
           },
         }),
       },
-    )) as ApiResponse;
+    )) as SourceApiResponse;
 
-    return body.data?.attributes ? (body.data.attributes as Source) : null;
+    return unwrapResourceAttributes(body);
   } catch (error) {
     logErrorMessage(
       `updateSource["${uuid}"]`,
@@ -130,9 +125,9 @@ export const deleteSource = async (
       {
         method: 'DELETE',
       },
-    )) as ApiResponse;
+    )) as ApiDeleteResponse;
 
-    return body.meta ? (body.meta as ApiDeleteMeta) : null;
+    return body.meta ?? null;
   } catch (error) {
     logErrorMessage(
       `deleteSource["${uuid}"]`,

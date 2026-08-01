@@ -1,12 +1,22 @@
-import { assertApiSuccess, getApiToken, getBaseUrl } from '@/libs/api.js';
+import {
+  assertApiSuccess,
+  getApiToken,
+  getBaseUrl,
+  unwrapResourceAttributes,
+  unwrapResourceCollection,
+} from '@/libs/api.js';
 import { logErrorMessage } from '@/libs/errors.js';
 import {
   ApiDeleteMeta,
-  ApiLinks,
-  ApiListResponse,
-  ApiResponse,
+  ApiDeleteResponse,
+  ApiPaginationLinks,
 } from '@/types/api.types.js';
-import { Record, PaginatedRecordsMeta } from '@/types/records.types.js';
+import {
+  Record,
+  PaginatedRecordsMeta,
+  RecordApiResponse,
+  RecordListApiResponse,
+} from '@/types/records.types.js';
 
 // markpost paginates with a cursor: each response's `links.next` embeds the
 // `page[after]` cursor to request the following page, and is `null` once
@@ -103,7 +113,7 @@ export const fetchPaginatedRecords = async (
 ): Promise<{
   records: Record[];
   meta: PaginatedRecordsMeta;
-  links: ApiLinks;
+  links: ApiPaginationLinks;
 } | null> => {
   try {
     const response = await fetch(
@@ -115,15 +125,41 @@ export const fetchPaginatedRecords = async (
       },
     );
 
-    const body = (await response.json()) as ApiListResponse;
+    const body = (await response.json()) as RecordListApiResponse;
 
     assertApiSuccess(response, body);
 
-    return {
-      records: body.data?.map(({ attributes }) => attributes) as Record[],
-      meta: body.meta as PaginatedRecordsMeta,
-      links: body.links ?? { next: null, prev: null },
+    const records = unwrapResourceCollection(
+      'fetchPaginatedRecords',
+      body,
+      'record',
+    );
+
+    // `meta`/`links` fall back to conservative defaults, field by field
+    // (rather than an unchecked cast of a possibly-partial object), if a
+    // response is ever malformed: `hasMore: false` and `next: null` both
+    // stop pagination instead of the caller crashing on `undefined.hasMore`
+    // or looping forever chasing a cursor that was never there.
+    //
+    // `total` falls back to the pre-filter resource count (not
+    // `records.length`, which has already dropped any unusable resources) —
+    // when `meta` is also missing, the fallback should still describe how
+    // many resources the server actually sent, not how many survived the
+    // attributes check.
+    const resourceCount = (body.data ?? []).length;
+    const rawMeta = body.meta as Partial<PaginatedRecordsMeta> | undefined;
+    const meta: PaginatedRecordsMeta = {
+      total: rawMeta?.total ?? resourceCount,
+      size: rawMeta?.size ?? size,
+      hasMore: rawMeta?.hasMore ?? false,
     };
+    const rawLinks = body.links as Partial<ApiPaginationLinks> | undefined;
+    const links: ApiPaginationLinks = {
+      next: rawLinks?.next ?? null,
+      prev: rawLinks?.prev ?? null,
+    };
+
+    return { records, meta, links };
   } catch (error) {
     logErrorMessage(
       `fetchPaginatedRecords`,
@@ -156,10 +192,10 @@ export const createRecord = async (
       }),
     });
 
-    const body = (await response.json()) as ApiResponse;
+    const body = (await response.json()) as RecordApiResponse;
     assertApiSuccess(response, body);
 
-    return body.data?.attributes ? (body.data?.attributes as Record) : null;
+    return unwrapResourceAttributes(body);
   } catch (error) {
     logErrorMessage(
       `createRecord["${title}"]`,
@@ -178,11 +214,11 @@ export const fetchRecord = async (uuid: string): Promise<Record | null> => {
       },
     });
 
-    const body = (await response.json()) as ApiResponse;
+    const body = (await response.json()) as RecordApiResponse;
 
     assertApiSuccess(response, body);
 
-    return body.data?.attributes ? (body.data?.attributes as Record) : null;
+    return unwrapResourceAttributes(body);
   } catch (error) {
     logErrorMessage(
       `fetchRecord["${uuid}"]`,
@@ -213,10 +249,10 @@ export const deleteRecords = async (
       }),
     });
 
-    const body = (await response.json()) as ApiResponse;
+    const body = (await response.json()) as ApiDeleteResponse;
     assertApiSuccess(response, body);
 
-    return body.meta ? (body.meta as ApiDeleteMeta) : null;
+    return body.meta ?? null;
   } catch (error) {
     logErrorMessage(
       `deleteRecords["${uuids.join(', ')}"]`,

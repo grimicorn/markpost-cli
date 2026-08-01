@@ -5,11 +5,18 @@ import {
   formatErrorMessages,
   getApiToken,
   getBaseUrl,
+  unwrapResourceAttributes,
+  unwrapResourceCollection,
 } from '@/libs/api.js';
-import { ApiError } from '@/types/api.types.js';
+import { logErrorMessage } from '@/libs/errors.js';
+import { ApiError, ApiResourceObject, ApiResponse } from '@/types/api.types.js';
 
 vi.mock('@/libs/config.js', () => ({
   config: { get: vi.fn() },
+}));
+
+vi.mock('@/libs/errors.js', () => ({
+  logErrorMessage: vi.fn(),
 }));
 
 describe('getBaseUrl', () => {
@@ -118,6 +125,160 @@ describe('assertApiSuccess', () => {
 
     expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
       'Conflict: Duplicate record',
+    );
+  });
+
+  // markpost's declared `ApiResponse<T>` contract models a top-level
+  // `errors` field (`{ errors: ApiError[], data?: never }`) as an
+  // alternative to today's actual `data.errors` shape. Nothing currently
+  // sends this shape, but the CLI must not silently accept it as success
+  // just because it doesn't match the shape every handler happens to use
+  // today.
+  it('throws when the body carries top-level errors instead of nested data.errors', () => {
+    const body = { errors: [error('Unauthorized', 'Invalid or missing token')] };
+
+    expect(() => assertApiSuccess({ ok: false } as Response, body)).toThrow(
+      'Unauthorized: Invalid or missing token',
+    );
+  });
+
+  it('throws when the response is ok but carries top-level errors', () => {
+    const body = { errors: [error('Conflict', 'Duplicate record')] };
+
+    expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
+      'Conflict: Duplicate record',
+    );
+  });
+
+  it('does not let an empty data.errors mask a populated top-level errors', () => {
+    const body = {
+      data: { errors: [] },
+      errors: [error('Conflict', 'Duplicate record')],
+    };
+
+    expect(() => assertApiSuccess({ ok: true } as Response, body)).toThrow(
+      'Conflict: Duplicate record',
+    );
+  });
+
+  // Regression coverage: an off-contract, non-array `errors` field (an
+  // object here, but a string has the same problem) must not throw a raw
+  // `TypeError` out of the spread — it degrades to "no errors present"
+  // instead, and `!response.ok` still surfaces "Unknown error occurred".
+  it('does not throw a TypeError when data.errors is not an array', () => {
+    const body = { data: { errors: { detail: 'not an array' } } };
+
+    expect(() => assertApiSuccess({ ok: false } as Response, body)).toThrow(
+      'Unknown error occurred',
+    );
+  });
+});
+
+describe('unwrapResourceAttributes', () => {
+  type FixtureAttributes = { uuid: string; title: string };
+  type FixtureResource = ApiResourceObject & {
+    type: 'fixtures';
+    attributes: FixtureAttributes;
+  };
+
+  it('returns the attributes off a resource object', () => {
+    const body: ApiResponse<FixtureResource | null> = {
+      data: {
+        type: 'fixtures',
+        id: 'abc-123',
+        attributes: { uuid: 'abc-123', title: 'Hello' },
+      },
+    };
+
+    expect(unwrapResourceAttributes(body)).toEqual({
+      uuid: 'abc-123',
+      title: 'Hello',
+    });
+  });
+
+  it('returns null when data is null', () => {
+    const body: ApiResponse<FixtureResource | null> = { data: null };
+
+    expect(unwrapResourceAttributes(body)).toBeNull();
+  });
+
+  it('returns null (not undefined) when the resource has no attributes', () => {
+    const body = {
+      data: { type: 'fixtures', id: 'abc-123' },
+    } as ApiResponse<FixtureResource | null>;
+
+    expect(unwrapResourceAttributes(body)).toBeNull();
+  });
+});
+
+describe('unwrapResourceCollection', () => {
+  type FixtureAttributes = { uuid: string; title: string };
+  type FixtureResource = ApiResourceObject & {
+    type: 'fixtures';
+    attributes: FixtureAttributes;
+  };
+
+  const fixture: FixtureAttributes = { uuid: 'abc-123', title: 'Hello' };
+
+  beforeEach(() => {
+    vi.mocked(logErrorMessage).mockClear();
+  });
+
+  it('returns [] and does not log when data is missing entirely', () => {
+    const body = {} as ApiResponse<FixtureResource[]>;
+
+    expect(unwrapResourceCollection('context', body, 'fixture')).toEqual([]);
+    expect(logErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns the attributes of every usable resource', () => {
+    const body: ApiResponse<FixtureResource[]> = {
+      data: [
+        { type: 'fixtures', id: 'abc-123', attributes: fixture },
+        { type: 'fixtures', id: 'def-456', attributes: { ...fixture, uuid: 'def-456' } },
+      ],
+    };
+
+    expect(unwrapResourceCollection('context', body, 'fixture')).toEqual([
+      fixture,
+      { ...fixture, uuid: 'def-456' },
+    ]);
+    expect(logErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('drops a resource with attributes explicitly null and logs the skip', () => {
+    const body = {
+      data: [
+        { type: 'fixtures', id: 'abc-123', attributes: fixture },
+        { type: 'fixtures', id: 'def-456', attributes: null },
+      ],
+    } as unknown as ApiResponse<FixtureResource[]>;
+
+    expect(unwrapResourceCollection('myContext', body, 'fixture')).toEqual([
+      fixture,
+    ]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'myContext',
+      'Skipped 1 fixture(s) with no attributes',
+    );
+  });
+
+  // The everything-dropped path matters most: it still returns successfully
+  // (an empty array, not a thrown error), so the only signal something's
+  // wrong is the logged skip count — this must not silently look identical
+  // to "the server legitimately returned zero resources".
+  it('drops every resource and logs the full count when none are usable', () => {
+    const body = {
+      data: [
+        { type: 'fixtures', id: 'abc-123' },
+        { type: 'fixtures', id: 'def-456', attributes: null },
+      ],
+    } as unknown as ApiResponse<FixtureResource[]>;
+
+    expect(unwrapResourceCollection('myContext', body, 'fixture')).toEqual([]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'myContext',
+      'Skipped 2 fixture(s) with no attributes',
     );
   });
 });

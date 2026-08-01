@@ -1,3 +1,5 @@
+import type { ApiResourceObject, ApiResponse } from '@/types/api.types.js';
+
 export const SOURCE_TYPES = [
   'webhook',
   'email',
@@ -35,3 +37,15 @@ export type UpdateSourceInput = {
   routeFolder?: string;
   fieldMapping?: unknown;
 };
+
+// The JSON:API resource object markpost's `sourceSerializer`
+// (`server/utils/response.ts`) actually produces for a source: `attributes`
+// plus the `type`/`id`/`links` envelope fields the old `ApiData` type dropped.
+export type SourceResource = ApiResourceObject & {
+  type: 'sources';
+  attributes: Source;
+};
+
+export type SourceApiResponse = ApiResponse<SourceResource | null>;
+
+export type SourceListApiResponse = ApiResponse<SourceResource[]>;

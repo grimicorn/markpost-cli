@@ -17,7 +17,8 @@
     "test:ui": "npm run test -- --ui",
     "lint": "prettier --check ./src && eslint ./src",
     "lint:fix": "prettier --write ./src && eslint --fix ./src",
-    "prepare": "husky"
+    "prepare": "husky",
+    "sync:contract": "node scripts/sync-contract.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

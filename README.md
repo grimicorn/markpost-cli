@@ -46,6 +46,46 @@ Copy [`.envrc`](.envrc) and populate your values. If you use [direnv](https://di
 | `npm run test:ui`  | Run tests with Vitest UI               |
 | `npm run lint`     | Check formatting and linting           |
 | `npm run lint:fix` | Auto-fix formatting and linting issues |
+| `npm run sync:contract` | Refresh the vendored markpost API contract (see below) |
+
+### Contract sync
+
+The CLI talks to [markpost](https://github.com/grimicorn/markpost)'s API, so its
+request/response types need to match markpost's real contract exactly — a
+structural mismatch here previously caused real pagination and
+error-swallowing bugs. Instead of hand-mirroring markpost's types (which drift
+silently), `src/types/vendor/markpost-api.types.ts` is a vendored, verbatim
+copy of markpost's `server/types/api.types.ts`, and `src/types/api.types.ts`
+re-exports the generic envelope types (`ApiError`, `ApiRequest`,
+`ApiResourceObject`, `ApiResponse`) from it.
+
+- **Refreshing it:** run `npm run sync:contract` (optionally
+  `-- --from <path-to-a-local-markpost-checkout>`; without `--from` it
+  shallow-clones markpost fresh). This is a **human-run** step, not part of
+  CI — it needs network access (or a local checkout) to fetch the current
+  contract, and a test that depends on network access would be flaky and fail
+  offline. Review the resulting diff, run `npm run build` and `npm test`, then
+  commit it like any other change.
+- **Catching drift:** `tests/types/contract-drift.test.ts` runs on every
+  `npm test` / `npm run test:ci` and fails if either (a) the committed vendored
+  file stops exporting the type names the CLI depends on, or (b) the CLI's own
+  `src/` no longer compiles against it (it recompiles the real project with
+  the TypeScript compiler API, using `tsconfig.json` directly — not a
+  hand-written stand-in). No network access, no CI workflow changes needed.
+- **Wiring into CI:** this is already covered by the existing `npm test` /
+  `npm run test:ci` invocation in your CI workflow — no new step is required.
+  If you want an explicit, separate CI signal for contract drift specifically
+  (e.g. to label it distinctly in the checks UI), add:
+  ```yaml
+  - name: Check markpost contract drift
+    run: npx vitest run tests/types/contract-drift.test.ts
+  ```
+  after your existing install step.
+- **What this does *not* do:** it does not detect when markpost's *real*
+  upstream contract has changed and the vendored copy has fallen behind — that
+  would require network access at test time (flaky, and fails offline CI).
+  Re-run `npm run sync:contract` periodically or whenever a markpost API
+  change is suspected.
 
 ## Security scanning
 

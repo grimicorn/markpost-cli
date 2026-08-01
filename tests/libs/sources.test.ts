@@ -10,14 +10,29 @@ import { logErrorMessage } from '@/libs/errors.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Source } from '@/types/sources.types.js';
 
-vi.mock('@/libs/api.js', () => ({
-  getBaseUrl: () => 'https://example.com',
-  getApiToken: () => 'test-token',
-  formatErrorMessages: (errors: { title: string; detail: string }[]) =>
-    errors.length > 0
-      ? errors.map((e) => `${e.title}: ${e.detail}`).join('\n')
-      : 'Unknown error occurred',
+// @/libs/api.js imports @/libs/config.js, which constructs a real
+// `conf`-backed store (touching the developer's actual config directory) as
+// soon as it's loaded. Mock it so importActual below doesn't pull in that
+// side effect — getApiToken is overridden regardless, so nothing needs the
+// real store to resolve a value.
+vi.mock('@/libs/config.js', () => ({
+  config: { get: vi.fn() },
 }));
+
+// Only override the external-service seams (base URL, token). Everything
+// else — formatErrorMessages, unwrapResourceAttributes — stays real so these
+// tests exercise production response-parsing logic instead of a hand-copied
+// stand-in that could silently drift from it (see tests/libs/records.test.ts).
+vi.mock('@/libs/api.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/libs/api.js')>('@/libs/api.js');
+
+  return {
+    ...actual,
+    getBaseUrl: () => 'https://example.com',
+    getApiToken: () => 'test-token',
+  };
+});
 
 vi.mock('@/libs/errors.js', () => ({
   logErrorMessage: vi.fn(),
@@ -65,6 +80,40 @@ describe('fetchSources', () => {
     expect(await fetchSources()).toEqual([mockSource]);
   });
 
+  // Regression coverage for #29: see the equivalent note in the createSource
+  // describe block below.
+  it('extracts attributes from full JSON:API resource objects in a list response', async () => {
+    mockFetch({
+      data: [
+        {
+          type: 'sources',
+          id: mockSource.uuid,
+          attributes: mockSource,
+          links: { self: `/api/sources/${mockSource.uuid}` },
+        },
+      ],
+    });
+    expect(await fetchSources()).toEqual([mockSource]);
+  });
+
+  // Regression coverage for #29: authedSourcesRequest previously only
+  // checked `!response.ok`, so a 200 whose body still carried `errors`
+  // (e.g. `data.errors`) was treated as success everywhere in this file —
+  // the same class of error-swallowing bug the CLI's records path had
+  // already been fixed for (see tests/libs/records.test.ts). It now
+  // delegates to `assertApiSuccess`, which checks both.
+  it('returns [] and surfaces error details when the response is ok but carries errors', async () => {
+    mockFetch(
+      { data: { errors: [{ title: 'Error', detail: 'Server error' }] } },
+      true,
+    );
+    expect(await fetchSources()).toEqual([]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'fetchSources',
+      'Error: Server error',
+    );
+  });
+
   it('returns [] and surfaces error details when the response is not ok', async () => {
     mockFetch({ data: { errors: [{ title: 'Error', detail: 'Server error' }] } }, false);
     expect(await fetchSources()).toEqual([]);
@@ -74,6 +123,36 @@ describe('fetchSources', () => {
   it('returns [] on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     expect(await fetchSources()).toEqual([]);
+  });
+
+  // Regression coverage: a resource with no `attributes` at all must be
+  // skipped (not passed through as `undefined`) and the skip must be
+  // reported so it's visible instead of silently shrinking the result.
+  it('skips a resource with no attributes and reports the count', async () => {
+    mockFetch({
+      data: [{ attributes: mockSource }, { type: 'sources', id: 'x' }],
+    });
+
+    expect(await fetchSources()).toEqual([mockSource]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'fetchSources',
+      'Skipped 1 source(s) with no attributes',
+    );
+  });
+
+  // Regression coverage: `attributes: null` is off-contract but must be
+  // caught by the same skip logic as a missing `attributes` key, not passed
+  // through as a `null` element typed as a `Source`.
+  it('skips a resource with attributes explicitly null', async () => {
+    mockFetch({
+      data: [{ attributes: mockSource }, { type: 'sources', attributes: null }],
+    });
+
+    expect(await fetchSources()).toEqual([mockSource]);
+    expect(logErrorMessage).toHaveBeenCalledWith(
+      'fetchSources',
+      'Skipped 1 source(s) with no attributes',
+    );
   });
 });
 
@@ -113,6 +192,28 @@ describe('createSource', () => {
 
   it('returns the source attributes on success', async () => {
     mockFetch({ data: { attributes: mockSource } });
+    expect(
+      await createSource({
+        type: 'webhook',
+        name: 'Test Source',
+        routeFolder: '99-incoming/',
+      }),
+    ).toEqual(mockSource);
+  });
+
+  // Regression coverage for #29: markpost's real resource objects carry
+  // `type`/`id`/`links` alongside `attributes` (see `sourceSerializer` in
+  // markpost's server/utils/response.ts), which the CLI's old `ApiData` type
+  // couldn't even describe. Extraction must still work with the full shape.
+  it('extracts attributes from a full JSON:API resource object (type/id/links included)', async () => {
+    mockFetch({
+      data: {
+        type: 'sources',
+        id: mockSource.uuid,
+        attributes: mockSource,
+        links: { self: `/api/sources/${mockSource.uuid}` },
+      },
+    });
     expect(
       await createSource({
         type: 'webhook',
