@@ -157,6 +157,34 @@ describe('writeMarkdown', () => {
     expect(writtenPath).toBe(resolve(outputDirectory, 'test-title.md'));
   });
 
+  it('writes an assembled document with frontmatter when the record carries metadata', () => {
+    const syncedRecord: Record = {
+      ...mockRecord,
+      title: 'Deploy',
+      content: 'Commit shipped.',
+      frontmatter: {
+        title: 'Deploy',
+        source: 'webhook/github',
+        created: '2026-06-14T09:41:02Z',
+        tags: ['ci'],
+      },
+    };
+
+    writeMarkdown(syncedRecord);
+
+    const [, writtenContent] = vi.mocked(writeFileSync).mock.calls[0];
+    expect(writtenContent).toBe(
+      '---\n' +
+        'title: Deploy\n' +
+        'source: webhook/github\n' +
+        'created: 2026-06-14T09:41:02Z\n' +
+        'tags: [ci]\n' +
+        '---\n\n' +
+        '# Deploy\n\n' +
+        'Commit shipped.',
+    );
+  });
+
   it('keeps the write inside outputDirectory when the title contains path separators', () => {
     const maliciousRecord: Record = {
       ...mockRecord,

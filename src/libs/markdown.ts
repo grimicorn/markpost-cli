@@ -9,6 +9,7 @@ import {
 } from 'node:path';
 import slugify from '@sindresorhus/slugify';
 import { config } from '@/libs/config.js';
+import { buildRecordDocument } from '@/libs/frontmatter.js';
 import { Record } from '@/types/records.types.js';
 
 const MARKDOWN_EXTENSION = '.md';
@@ -122,8 +123,9 @@ export const writeMarkdown = (record: Record): string => {
   }
 
   const slug = slugifyTitle(record.title, record.uuid);
+  const content = buildRecordDocument(record);
 
-  return writeToFirstAvailablePath(outputDirectory, slug, record.content);
+  return writeToFirstAvailablePath(outputDirectory, slug, content);
 };
 
 // Used by the push command to create a new record from a local file: the
