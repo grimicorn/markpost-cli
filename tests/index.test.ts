@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Record } from '@/types/records.types.js';
+import { UserSettings } from '@/types/settings.types.js';
+import { SettingsReadResult } from '@/libs/settings.js';
 
 vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
+vi.mock('@/libs/settings.js', () => ({ fetchSettings: vi.fn() }));
 vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
 vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
 vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
@@ -12,7 +15,11 @@ vi.mock('@/commands/records.js', () => ({ runRecordsCommand: vi.fn() }));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
 vi.mock('chalk', () => ({
-  default: { redBright: vi.fn((s: unknown) => s), dim: vi.fn((s: unknown) => s) },
+  default: {
+    redBright: vi.fn((s: unknown) => s),
+    dim: vi.fn((s: unknown) => s),
+    yellow: vi.fn((s: unknown) => s),
+  },
 }));
 
 const mockRecord: Record = {
@@ -151,18 +158,20 @@ describe('index', () => {
   it('fetches all records and writes each as markdown', async () => {
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
-    vi.mocked(deleteRecords).mockResolvedValue(undefined);
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
     await import('@/index.js');
 
     expect(mockSpinner.start).toHaveBeenCalledWith('Fetching records...');
     expect(fetchAllRecords).toHaveBeenCalled();
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 0, [mockRecord]);
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
     expect(mockSpinner.success).toHaveBeenCalledWith('Fetched 1 records!');
     expect(mockSpinner.start).toHaveBeenCalledWith('Writing records...');
     expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
@@ -177,21 +186,28 @@ describe('index', () => {
     const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
     vi.mocked(writeMarkdown)
       .mockReturnValueOnce('/mock/output/test-title.md')
       .mockReturnValueOnce('/mock/output/title-2.md');
-    vi.mocked(deleteRecords).mockResolvedValue(undefined);
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
     await import('@/index.js');
 
-    const records = [mockRecord, mockRecord2];
     expect(writeMarkdown).toHaveBeenCalledTimes(2);
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 0, records);
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord2, 1, records);
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord2, 'suffix', expect.any(Set));
+    // The whole reason seenSlugs is threaded is that every record in a batch
+    // shares one Set — assert the exact same instance reaches both calls, so
+    // a regression to a per-record Set (which would disable the overwrite
+    // clobber guard) fails here.
+    const [firstCall, secondCall] = vi.mocked(writeMarkdown).mock.calls;
+    expect(secondCall[2]).toBe(firstCall[2]);
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('/mock/output/test-title.md'),
     );
@@ -227,6 +243,198 @@ describe('index', () => {
 
     expect(mockSpinner.error).toHaveBeenCalled();
     expect(console.error).toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  const mockSettings = (
+    overrides: Partial<UserSettings> = {},
+  ): SettingsReadResult => ({
+    ok: true,
+    settings: {
+      userId: 'user-1',
+      vaultDir: '',
+      filenameTemplate: '',
+      autoSync: true,
+      autoDelete: true,
+      frontmatter: true,
+      conflictStrategy: 'suffix',
+      theme: 'system',
+      accentColor: '#a855f7',
+      updatedAt: '2024-01-01T00:00:00Z',
+      ...overrides,
+    },
+  });
+
+  it('writes records but skips the delete and warns when settings cannot be read', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue({ ok: false });
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+
+    await import('@/index.js');
+
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Could not read settings'),
+    );
+    expect(mockSpinner.start).not.toHaveBeenCalledWith('Deleting records...');
+    expect(deleteRecords).not.toHaveBeenCalled();
+  });
+
+  it("passes the user's conflict strategy from settings to writeMarkdown", async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ conflictStrategy: 'overwrite' }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'overwrite', expect.any(Set));
+  });
+
+  it('normalizes an unknown conflict strategy from settings to suffix', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ conflictStrategy: 'bogus-value' }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
+  });
+
+  it('does not delete records when autoDelete is false', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoDelete: false }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+
+    await import('@/index.js');
+
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    expect(mockSpinner.start).not.toHaveBeenCalledWith('Deleting records...');
+    expect(deleteRecords).not.toHaveBeenCalled();
+  });
+
+  it('deletes records when autoDelete is true', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoDelete: true }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+  });
+
+  it('excludes skipped records (null write result) from the delete call', async () => {
+    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ conflictStrategy: 'skip' }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(writeMarkdown)
+      .mockReturnValueOnce('/mock/output/test-title.md')
+      .mockReturnValueOnce(null);
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Skipped 1 record(s)'),
+    );
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+  });
+
+  it('does not issue a delete request when every record was skipped', async () => {
+    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ conflictStrategy: 'skip' }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(writeMarkdown).mockReturnValue(null);
+
+    await import('@/index.js');
+
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 0 records!');
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Skipped 2 record(s)'),
+    );
+    expect(mockSpinner.start).not.toHaveBeenCalledWith('Deleting records...');
+    expect(deleteRecords).not.toHaveBeenCalled();
+  });
+
+  it('reports a delete failure loudly instead of claiming success', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue(null);
+
+    await import('@/index.js');
+
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to delete records'),
+    );
+    expect(mockSpinner.success).not.toHaveBeenCalledWith(
+      expect.stringContaining('Deleted'),
+    );
     expect(process.exitCode).toBe(1);
   });
 });

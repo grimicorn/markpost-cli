@@ -1,4 +1,10 @@
-import { writeFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import {
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import {
   basename,
   extname,
@@ -11,6 +17,10 @@ import slugify from '@sindresorhus/slugify';
 import { config } from '@/libs/config.js';
 import { buildRecordDocument } from '@/libs/frontmatter.js';
 import { Record } from '@/types/records.types.js';
+import {
+  ConflictStrategy,
+  DEFAULT_CONFLICT_STRATEGY,
+} from '@/types/settings.types.js';
 
 const MARKDOWN_EXTENSION = '.md';
 const FIRST_COLLISION_SUFFIX = 2;
@@ -111,7 +121,102 @@ const writeToFirstAvailablePath = (
   );
 };
 
-export const writeMarkdown = (record: Record): string => {
+// `overwrite` strategy: replace whatever is at `<slug>.md` with this record.
+// Remove any existing entry first, then exclusively create a fresh regular
+// file. `rmSync` acts on the link itself, so a symlink is unlinked (its
+// target outside the vault is left untouched) and a hardlink loses only this
+// name (the shared inode is never truncated) — that's what stops an
+// `overwrite` write from following a planted link out of the vault, since
+// `resolveWithinOutputDirectory` only guards the string path. Recreating with
+// the exclusive flag means that if something races a new entry into the gap,
+// the write fails (EEXIST) rather than following it. No collision loop — the
+// user has opted into the newest record winning a slug clash.
+const writeOverwriting = (
+  outputDirectory: string,
+  slug: string,
+  content: string,
+): string => {
+  const candidatePath = resolveWithinOutputDirectory(
+    outputDirectory,
+    `${slug}${MARKDOWN_EXTENSION}`,
+  );
+
+  rmSync(candidatePath, { force: true });
+  writeFileSync(candidatePath, content, { flag: EXCLUSIVE_WRITE_FLAG });
+
+  return candidatePath;
+};
+
+// `skip` strategy: write `<slug>.md` only if nothing is there yet. Uses the
+// exclusive-create flag so the existence check and the write are one atomic
+// operation, then returns `null` on an EEXIST collision to signal the record
+// was intentionally left unwritten (the caller must not delete a record it
+// never persisted). Any other error still propagates.
+const writeIfAbsent = (
+  outputDirectory: string,
+  slug: string,
+  content: string,
+): string | null => {
+  const candidatePath = resolveWithinOutputDirectory(
+    outputDirectory,
+    `${slug}${MARKDOWN_EXTENSION}`,
+  );
+
+  try {
+    writeFileSync(candidatePath, content, { flag: EXCLUSIVE_WRITE_FLAG });
+    return candidatePath;
+  } catch (error) {
+    if (isFileAlreadyExistsError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
+// One writer per conflict strategy, dispatched by the user's markpost
+// preference. A Map keeps dispatch in one place (mirroring the command
+// dispatch in index.ts) instead of a switch that has to be kept exhaustive
+// by hand. `null` in the return union is the `skip`-collision signal.
+const STRATEGY_WRITERS = new Map<
+  ConflictStrategy,
+  (outputDirectory: string, slug: string, content: string) => string | null
+>([
+  ['suffix', writeToFirstAvailablePath],
+  ['overwrite', writeOverwriting],
+  ['skip', writeIfAbsent],
+]);
+
+// `overwrite` truncates whatever is at `<slug>.md`. That's the intended
+// behavior against a file left by a *previous* run, but two records fetched
+// in the *same* run that slugify identically would clobber each other — and
+// since the caller deletes every written record from the server, the
+// clobbered one would be lost everywhere. When the slug has already been
+// written this run, fall back to suffix so both records keep a distinct file.
+// Only `overwrite` needs this: `suffix` and `skip` both use the exclusive
+// flag, so a real on-disk collision already routes them safely.
+const resolveStrategyForSlug = (
+  conflictStrategy: ConflictStrategy,
+  slug: string,
+  seenSlugs: Set<string>,
+): ConflictStrategy => {
+  if (conflictStrategy === 'overwrite' && seenSlugs.has(slug)) {
+    return 'suffix';
+  }
+
+  return conflictStrategy;
+};
+
+// Returns the resolved path written to, or `null` when the `skip` strategy
+// left an existing file untouched. Defaults to `suffix` (markpost's own
+// default) when no strategy is supplied. `seenSlugs` is run-scoped state the
+// caller threads across a batch so `overwrite` can't lose two same-slug
+// records written in one sync (see resolveStrategyForSlug).
+export const writeMarkdown = (
+  record: Record,
+  conflictStrategy: ConflictStrategy = DEFAULT_CONFLICT_STRATEGY,
+  seenSlugs: Set<string> = new Set(),
+): string | null => {
   const outputDirectory = getOutputDirectory();
 
   if (!outputDirectory) {
@@ -124,8 +229,18 @@ export const writeMarkdown = (record: Record): string => {
 
   const slug = slugifyTitle(record.title, record.uuid);
   const content = buildRecordDocument(record);
+  const effectiveStrategy = resolveStrategyForSlug(
+    conflictStrategy,
+    slug,
+    seenSlugs,
+  );
+  const writer =
+    STRATEGY_WRITERS.get(effectiveStrategy) ?? writeToFirstAvailablePath;
 
-  return writeToFirstAvailablePath(outputDirectory, slug, content);
+  const writtenPath = writer(outputDirectory, slug, content);
+  seenSlugs.add(slug);
+
+  return writtenPath;
 };
 
 // Used by the push command to create a new record from a local file: the
