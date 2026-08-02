@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import slugify from '@sindresorhus/slugify';
@@ -19,21 +25,29 @@ const createFileAlreadyExistsError = (): NodeJS.ErrnoException => {
   return error;
 };
 
-// Simulates writeFileSync's exclusive-create ('wx') behavior against a set
-// of paths that are already "on disk": rejects with EEXIST for any path in
-// takenPaths, otherwise succeeds and adds the path so later attempts against
-// the same path also collide.
+// Simulates a filesystem holding a set of paths. The exclusive-create ('wx')
+// write rejects with EEXIST for a taken path (suffix/skip and the overwrite
+// strategy's recreate step); a successful write adds the path. `rmSync`
+// removes the path first, modelling the overwrite strategy's unlink-then-
+// recreate, so both calls share one simulated disk.
 const mockWriteFileSyncRejectingExistingPaths = (
   existingPaths: Iterable<string> = [],
 ): void => {
   const takenPaths = new Set(existingPaths);
 
-  vi.mocked(writeFileSync).mockImplementation((path) => {
-    if (takenPaths.has(path as string)) {
+  vi.mocked(writeFileSync).mockImplementation((path, _content, options) => {
+    const flag =
+      typeof options === 'object' && options !== null ? options.flag : undefined;
+
+    if (flag === 'wx' && takenPaths.has(path as string)) {
       throw createFileAlreadyExistsError();
     }
 
     takenPaths.add(path as string);
+  });
+
+  vi.mocked(rmSync).mockImplementation((path) => {
+    takenPaths.delete(path as string);
   });
 };
 
@@ -42,6 +56,7 @@ vi.mock('node:fs', () => ({
   mkdirSync: vi.fn(),
   writeFileSync: vi.fn(),
   readFileSync: vi.fn(),
+  rmSync: vi.fn(),
 }));
 
 vi.mock('@/libs/config.js', () => ({
@@ -88,6 +103,7 @@ describe('writeMarkdown', () => {
     // so it would otherwise leak into later tests. Same reasoning for
     // restoring slugify's real implementation here.
     vi.mocked(writeFileSync).mockReset();
+    vi.mocked(rmSync).mockReset();
     vi.mocked(slugify).mockImplementation(actualSlugify);
     vi.mocked(config.get).mockReturnValue(undefined);
   });
@@ -312,6 +328,150 @@ describe('writeMarkdown', () => {
 
     expect(() => writeMarkdown(mockRecord)).toThrow(permissionError);
     expect(writeFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to the suffix strategy when no conflict strategy is given', () => {
+    mockWriteFileSyncRejectingExistingPaths([
+      resolve(outputDirectory, 'test-title.md'),
+    ]);
+
+    const writtenPath = writeMarkdown(mockRecord);
+
+    expect(writtenPath).toBe(resolve(outputDirectory, 'test-title-2.md'));
+  });
+
+  describe('overwrite strategy', () => {
+    it('removes any existing entry, then exclusively creates the base slug path', () => {
+      const writtenPath = writeMarkdown(mockRecord, 'overwrite');
+
+      expect(writtenPath).toBe(resolve(outputDirectory, 'test-title.md'));
+      expect(rmSync).toHaveBeenCalledWith(
+        resolve(outputDirectory, 'test-title.md'),
+        { force: true },
+      );
+      expect(writeFileSync).toHaveBeenCalledTimes(1);
+      expect(writeFileSync).toHaveBeenCalledWith(
+        resolve(outputDirectory, 'test-title.md'),
+        mockRecord.content,
+        EXCLUSIVE_WRITE_OPTIONS,
+      );
+    });
+
+    it('replaces an existing file at the slug path instead of suffix-renaming', () => {
+      mockWriteFileSyncRejectingExistingPaths([
+        resolve(outputDirectory, 'test-title.md'),
+      ]);
+
+      const writtenPath = writeMarkdown(mockRecord, 'overwrite');
+
+      expect(writtenPath).toBe(resolve(outputDirectory, 'test-title.md'));
+      expect(writeFileSync).not.toHaveBeenCalledWith(
+        resolve(outputDirectory, 'test-title-2.md'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('falls back to a suffix for a second same-slug record in one run so neither is clobbered', () => {
+      mockWriteFileSyncRejectingExistingPaths();
+      const seenSlugs = new Set<string>();
+      const firstRecord: Record = {
+        ...mockRecord,
+        uuid: 'first',
+        title: 'Test Title',
+      };
+      const secondRecord: Record = {
+        ...mockRecord,
+        uuid: 'second',
+        title: 'Test Title',
+      };
+
+      const firstPath = writeMarkdown(firstRecord, 'overwrite', seenSlugs);
+      const secondPath = writeMarkdown(secondRecord, 'overwrite', seenSlugs);
+
+      expect(firstPath).toBe(resolve(outputDirectory, 'test-title.md'));
+      expect(secondPath).toBe(resolve(outputDirectory, 'test-title-2.md'));
+    });
+
+    it('keeps suffixing subsequent same-slug records in one run', () => {
+      mockWriteFileSyncRejectingExistingPaths();
+      const seenSlugs = new Set<string>();
+
+      const paths = ['first', 'second', 'third'].map((uuid) =>
+        writeMarkdown({ ...mockRecord, uuid, title: 'Test Title' }, 'overwrite', seenSlugs),
+      );
+
+      expect(paths).toEqual([
+        resolve(outputDirectory, 'test-title.md'),
+        resolve(outputDirectory, 'test-title-2.md'),
+        resolve(outputDirectory, 'test-title-3.md'),
+      ]);
+    });
+
+    it('unlinks the path before writing so a symlink is removed, not followed', () => {
+      const invocationOrder: string[] = [];
+      vi.mocked(rmSync).mockImplementation(() => {
+        invocationOrder.push('rm');
+      });
+      vi.mocked(writeFileSync).mockImplementation(() => {
+        invocationOrder.push('write');
+      });
+
+      writeMarkdown(mockRecord, 'overwrite');
+
+      expect(invocationOrder).toEqual(['rm', 'write']);
+    });
+
+    it('rethrows a write error from the recreate step', () => {
+      const permissionError = new Error('EACCES') as NodeJS.ErrnoException;
+      permissionError.code = 'EACCES';
+      vi.mocked(writeFileSync).mockImplementation(() => {
+        throw permissionError;
+      });
+
+      expect(() => writeMarkdown(mockRecord, 'overwrite')).toThrow(
+        permissionError,
+      );
+    });
+  });
+
+  describe('skip strategy', () => {
+    it('writes to the base slug path with the exclusive flag when it is free', () => {
+      const writtenPath = writeMarkdown(mockRecord, 'skip');
+
+      expect(writtenPath).toBe(resolve(outputDirectory, 'test-title.md'));
+      expect(writeFileSync).toHaveBeenCalledWith(
+        resolve(outputDirectory, 'test-title.md'),
+        mockRecord.content,
+        EXCLUSIVE_WRITE_OPTIONS,
+      );
+    });
+
+    it('returns null and does not suffix-rename when the slug path is taken', () => {
+      mockWriteFileSyncRejectingExistingPaths([
+        resolve(outputDirectory, 'test-title.md'),
+      ]);
+
+      const writtenPath = writeMarkdown(mockRecord, 'skip');
+
+      expect(writtenPath).toBeNull();
+      expect(writeFileSync).toHaveBeenCalledTimes(1);
+      expect(writeFileSync).not.toHaveBeenCalledWith(
+        resolve(outputDirectory, 'test-title-2.md'),
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('rethrows a non-collision error instead of returning null', () => {
+      const permissionError = new Error('EACCES') as NodeJS.ErrnoException;
+      permissionError.code = 'EACCES';
+      vi.mocked(writeFileSync).mockImplementation(() => {
+        throw permissionError;
+      });
+
+      expect(() => writeMarkdown(mockRecord, 'skip')).toThrow(permissionError);
+    });
   });
 });
 

@@ -2,6 +2,7 @@
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
+import { fetchSettings } from '@/libs/settings.js';
 import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
 import { runSourcesCommand } from '@/commands/sources.js';
@@ -10,6 +11,12 @@ import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
+import { Record } from '@/types/records.types.js';
+import {
+  ConflictStrategy,
+  normalizeAutoDelete,
+  normalizeConflictStrategy,
+} from '@/types/settings.types.js';
 
 const [command, ...commandArgs] = process.argv.slice(2);
 
@@ -44,13 +51,64 @@ if (!command) {
   await runDefaultSync();
 }
 
-// Default behavior when no subcommand is given: fetch all records, write
-// each to a markdown file, then delete them from the server.
+type WrittenRecord = { record: Record; filePath: string };
+
+// Writes each record with the user's conflict strategy, keeping the record
+// alongside the path it landed at. A `null` return means the `skip` strategy
+// left an existing file untouched, so that record is dropped here and never
+// reaches the delete step — deleting a record the CLI never persisted would
+// lose it for good.
+function writeRecords(
+  records: Record[],
+  conflictStrategy: ConflictStrategy,
+): WrittenRecord[] {
+  // One Set shared across the whole batch so `overwrite` can detect two
+  // same-slug records in a single sync and avoid clobbering (see
+  // writeMarkdown/resolveStrategyForSlug). `map` preserves order, so the
+  // threading behaves the same as a sequential loop.
+  const seenSlugs = new Set<string>();
+
+  return records
+    .map((record) => ({
+      record,
+      filePath: writeMarkdown(record, conflictStrategy, seenSlugs),
+    }))
+    .filter((written): written is WrittenRecord => written.filePath !== null);
+}
+
+// Default behavior when no subcommand is given: read the user's markpost
+// settings, fetch all records, write each to a markdown file honoring the
+// conflict strategy, then (only if autoDelete is on) delete the records that
+// were actually written from the server.
 async function runDefaultSync(): Promise<void> {
   const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
 
   try {
     await checkConfig();
+
+    // Read settings up front so both write and delete honor the user's
+    // markpost preferences. A failed read (`ok: false`) still writes (suffix
+    // is the safe non-destructive default) but never auto-deletes — deleting
+    // server records is irreversible, so an unknown state must not fall
+    // through to "delete". A successful read with no saved row (`settings:
+    // null`) is a real account default, so it uses markpost's defaults
+    // silently.
+    const settingsResult = await fetchSettings();
+    const settings = settingsResult.ok ? settingsResult.settings : null;
+    const conflictStrategy = normalizeConflictStrategy(
+      settings?.conflictStrategy,
+    );
+    const autoDelete = settingsResult.ok
+      ? normalizeAutoDelete(settings?.autoDelete)
+      : false;
+
+    if (!settingsResult.ok) {
+      console.log(
+        chalk.yellow(
+          'Could not read settings — writing records but skipping the auto-delete this run. Re-run once settings are reachable.',
+        ),
+      );
+    }
 
     // Fetch records
     spinner.start('Fetching records...');
@@ -65,16 +123,55 @@ async function runDefaultSync(): Promise<void> {
 
     // Write Records
     spinner.start('Writing records...');
-    const writtenFilePaths = allRecords.map(writeMarkdown);
-    spinner.success(`Wrote ${allRecords.length} records!`);
-    writtenFilePaths.forEach((filePath) => {
+    const writtenRecords = writeRecords(allRecords, conflictStrategy);
+    spinner.success(`Wrote ${writtenRecords.length} records!`);
+    writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
     });
 
-    // Delete Records
+    // Surface records the `skip` strategy left unwritten: they stay on the
+    // server (they're excluded from the delete below), so the user needs to
+    // know they weren't synced rather than silently losing count of them.
+    const skippedCount = allRecords.length - writtenRecords.length;
+    if (skippedCount > 0) {
+      console.log(
+        chalk.yellow(
+          `Skipped ${skippedCount} record(s): a file already exists at their path — left on the server.`,
+        ),
+      );
+    }
+
+    // Delete Records — skipped entirely when the user has autoDelete off, or
+    // when nothing was written (a bare DELETE with an empty uuid list would
+    // be a wasted, possibly-rejected request reported as success).
+    if (!autoDelete) {
+      console.log(
+        chalk.dim('  autoDelete is off — records left on the server.'),
+      );
+      return;
+    }
+
+    if (writtenRecords.length === 0) {
+      return;
+    }
+
     spinner.start('Deleting records...');
-    await deleteRecords(allRecords.map(({ uuid }) => uuid));
-    spinner.success(`Wrote ${allRecords.length} records!`);
+    const deleteMeta = await deleteRecords(
+      writtenRecords.map(({ record }) => record.uuid),
+    );
+
+    // deleteRecords swallows its own errors and returns null; reporting
+    // success here would lie (records still on the server, re-fetched and
+    // duplicated next run). Surface the failure loudly instead.
+    if (!deleteMeta) {
+      spinner.error(
+        'Failed to delete records from the server — they were written locally but remain on the server.',
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    spinner.success(`Deleted ${deleteMeta.deleted} records!`);
   } catch (error) {
     spinner.error('Something went wrong!');
     console.error(chalk.redBright(error));
