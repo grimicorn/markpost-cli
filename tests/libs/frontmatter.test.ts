@@ -141,6 +141,19 @@ describe('buildRecordDocument', () => {
     expect(result).not.toContain('source: webhook/github');
   });
 
+  it('returns bare content (no heading) when frontmatter is disabled and the record has no metadata', () => {
+    const bareRecord: Record = {
+      uuid: 'abc-123',
+      createdAt: '2026-06-14T09:41:02Z',
+      title: 'Pushed note',
+      content: 'Just some text.',
+    };
+
+    // No frontmatter object means no parsed title, so there's no heading to
+    // keep — same bare-content path as with frontmatter enabled.
+    expect(buildRecordDocument(bareRecord, false)).toBe('Just some text.');
+  });
+
   it('includes the frontmatter block when frontmatter is enabled explicitly', () => {
     const result = buildRecordDocument(recordWithFrontmatter, true);
 

@@ -29,10 +29,19 @@ const AUTO_SYNC_INTERVAL_MINUTES = AUTO_SYNC_INTERVAL_MS / MS_PER_MINUTE;
 // than reprinting the banner on every scheduled iteration.
 let autoSyncAnnounced = false;
 
+// The last autoSync value confirmed from a successful settings read. Once a
+// daemon is established, a transient failure *before* the next read (e.g.
+// checkConfig throwing) shouldn't silently end the loop — it resumes from this.
+// Stays false until the first successful read, so a failure on the very first
+// iteration never starts a loop.
+let lastKnownAutoSync = false;
+
 // UUIDs already written this process. In an autoSync loop with autoDelete off,
 // the same server records reappear every iteration; without this the suffix
 // strategy would write test-title-1.md, test-title-2.md, ... endlessly. Scoped
-// to the process, so a fresh `markpost` invocation starts empty.
+// to the process, so a fresh `markpost` invocation starts empty. Keyed by uuid
+// alone (the record contract carries no mutation timestamp), so a record edited
+// on the server after being synced is not re-fetched within the same session.
 const syncedRecordIds = new Set<string>();
 
 const [command, ...commandArgs] = process.argv.slice(2);
@@ -117,6 +126,68 @@ function announceAutoSync(autoSync: boolean): void {
   );
 }
 
+type Spinner = ReturnType<typeof yoctoSpinner>;
+
+// Surface records the `skip` strategy left unwritten: they stay on the server
+// (they're excluded from the delete), so the user needs to know they weren't
+// synced rather than silently losing count of them.
+function reportSkipped(skippedCount: number): void {
+  if (skippedCount <= 0) {
+    return;
+  }
+
+  console.log(
+    chalk.yellow(
+      `Skipped ${skippedCount} record(s): a file already exists at their path — left on the server.`,
+    ),
+  );
+}
+
+// Resolves the server side of a write: with autoDelete off the records are
+// intentionally left on the server; with it on they're deleted. Returns whether
+// the records are settled server-side and therefore safe to mark synced — a
+// failed delete returns false so they're retried next iteration instead of
+// being abandoned (and re-surfaces the error each time until it succeeds).
+async function finalizeServerRecords(
+  writtenRecords: WrittenRecord[],
+  autoDelete: boolean,
+  spinner: Spinner,
+): Promise<boolean> {
+  if (!autoDelete) {
+    if (writtenRecords.length > 0) {
+      console.log(
+        chalk.dim('  autoDelete is off — records left on the server.'),
+      );
+    }
+    return true;
+  }
+
+  // A bare DELETE with an empty uuid list would be a wasted, possibly-rejected
+  // request reported as success.
+  if (writtenRecords.length === 0) {
+    return true;
+  }
+
+  spinner.start('Deleting records...');
+  const deleteMeta = await deleteRecords(
+    writtenRecords.map(({ record }) => record.uuid),
+  );
+
+  // deleteRecords swallows its own errors and returns null; reporting success
+  // here would lie (records still on the server, re-fetched next run). Surface
+  // the failure loudly and report "not settled" so they're retried.
+  if (!deleteMeta) {
+    spinner.error(
+      'Failed to delete records from the server — they were written locally but remain on the server.',
+    );
+    process.exitCode = 1;
+    return false;
+  }
+
+  spinner.success(`Deleted ${deleteMeta.deleted} records!`);
+  return true;
+}
+
 // Default behavior when no subcommand is given: read the user's markpost
 // settings, fetch all records, write each to a markdown file honoring the
 // conflict strategy, then (only if autoDelete is on) delete the records that
@@ -129,11 +200,11 @@ async function runDefaultSync(): Promise<boolean> {
   // failed to whatever supervises the process.
   process.exitCode = 0;
 
-  // Hoisted so the catch can still report the sync mode: a transient error in
-  // one iteration must not silently stop a self-scheduling daemon. Stays
-  // `false` until settings are read, so a failure before that (bad config,
-  // unreachable settings) does not spin up the loop.
-  let autoSync = false;
+  // Start from the last confirmed value so a failure before the settings read
+  // (checkConfig, an unreachable settings endpoint) resumes an already-running
+  // daemon rather than silently ending it. Stays false until the first
+  // successful read, so a failure on the very first iteration never loops.
+  let autoSync = lastKnownAutoSync;
 
   try {
     await checkConfig();
@@ -152,7 +223,13 @@ async function runDefaultSync(): Promise<boolean> {
       autoSync: resolvedAutoSync,
       includeFrontmatter,
     } = resolveSyncSettings(settingsResult);
-    autoSync = resolvedAutoSync;
+
+    // Only a successful read updates the sync mode; a transient read failure
+    // keeps an established daemon on its last confirmed value.
+    if (settingsResult.ok) {
+      autoSync = resolvedAutoSync;
+      lastKnownAutoSync = resolvedAutoSync;
+    }
 
     if (!settingsResult.ok) {
       console.log(
@@ -189,57 +266,25 @@ async function runDefaultSync(): Promise<boolean> {
       conflictStrategy,
       includeFrontmatter,
     );
-    // Mark them synced now (on write success): even if the delete below fails,
-    // re-writing them next iteration would only create suffixed duplicates.
-    writtenRecords.forEach(({ record }) => syncedRecordIds.add(record.uuid));
     spinner.success(`Wrote ${writtenRecords.length} records!`);
     writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
     });
 
-    // Surface records the `skip` strategy left unwritten: they stay on the
-    // server (they're excluded from the delete below), so the user needs to
-    // know they weren't synced rather than silently losing count of them.
-    const skippedCount = newRecords.length - writtenRecords.length;
-    if (skippedCount > 0) {
-      console.log(
-        chalk.yellow(
-          `Skipped ${skippedCount} record(s): a file already exists at their path — left on the server.`,
-        ),
-      );
-    }
+    reportSkipped(newRecords.length - writtenRecords.length);
 
-    // Delete Records — skipped entirely when the user has autoDelete off, or
-    // when nothing was written (a bare DELETE with an empty uuid list would
-    // be a wasted, possibly-rejected request reported as success).
-    if (!autoDelete) {
-      console.log(
-        chalk.dim('  autoDelete is off — records left on the server.'),
-      );
-      return autoSync;
-    }
-
-    if (writtenRecords.length === 0) {
-      return autoSync;
-    }
-
-    spinner.start('Deleting records...');
-    const deleteMeta = await deleteRecords(
-      writtenRecords.map(({ record }) => record.uuid),
+    const settled = await finalizeServerRecords(
+      writtenRecords,
+      autoDelete,
+      spinner,
     );
 
-    // deleteRecords swallows its own errors and returns null; reporting
-    // success here would lie (records still on the server, re-fetched and
-    // duplicated next run). Surface the failure loudly instead.
-    if (!deleteMeta) {
-      spinner.error(
-        'Failed to delete records from the server — they were written locally but remain on the server.',
-      );
-      process.exitCode = 1;
-      return autoSync;
+    // Mark synced only once settled server-side: a failed delete leaves them
+    // unmarked so the next iteration retries instead of abandoning them.
+    if (settled) {
+      writtenRecords.forEach(({ record }) => syncedRecordIds.add(record.uuid));
     }
 
-    spinner.success(`Deleted ${deleteMeta.deleted} records!`);
     return autoSync;
   } catch (error) {
     spinner.error('Something went wrong!');

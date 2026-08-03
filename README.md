@@ -19,13 +19,17 @@ honoring your markpost account settings:
   one pass: it self-schedules and re-runs every 5 minutes, staying in the
   foreground until you stop it with `Ctrl-C`. A one-line banner announces this
   at startup. When off, `markpost` syncs once and exits. Records already written
-  during a session are not re-written on later iterations.
+  during a session are not re-written on later iterations; a record edited on
+  the server after it was synced is not re-fetched until you restart the process
+  (the record contract carries no mutation timestamp to detect the edit).
 - **`autoDelete`** — when on (markpost's default), records written locally are
   deleted from the server after a successful write; when off, they stay on the
-  server.
+  server. If a delete fails, the record is retried on the next `autoSync`
+  iteration rather than abandoned.
 - **`frontmatter`** — when on (markpost's default), synced files include a YAML
-  frontmatter block; when off, the file is written with just the `# Title`
-  heading and body.
+  frontmatter block. When off, records that carry markpost metadata are written
+  with just their `# Title` heading and body; records with no metadata (e.g.
+  `markpost push` created) are written as bare content either way.
 - **`conflictStrategy`** — how same-name files are handled (`suffix`,
   `overwrite`, or `skip`).
 

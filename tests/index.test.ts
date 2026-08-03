@@ -524,6 +524,60 @@ describe('index', () => {
     expect(bannerCalls).toHaveLength(1);
   });
 
+  it('retries a record on the next iteration when its server delete failed', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoSync: true, autoDelete: true }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    // Delete fails on iteration 1 (null), succeeds on iteration 2.
+    vi.mocked(deleteRecords)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+    // A failed delete must not mark the record synced.
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to delete records'),
+    );
+
+    await scheduler.runSync?.();
+
+    // The record was re-written and re-deleted rather than filtered out as
+    // "already synced" — a failed delete is retried, not abandoned.
+    expect(writeMarkdown).toHaveBeenCalledTimes(2);
+    expect(deleteRecords).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a running daemon alive when a later iteration fails before the settings read', async () => {
+    const { checkConfig } = await import('@/libs/config.js');
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings({ autoSync: true }));
+    vi.mocked(fetchAllRecords).mockResolvedValue([]);
+
+    await import('@/index.js');
+    // Iteration 1 established the daemon (autoSync confirmed on).
+    expect(scheduler.lastSyncResult).toBe(true);
+
+    // Iteration 2 fails in checkConfig (before the settings read).
+    vi.mocked(checkConfig).mockRejectedValueOnce(new Error('config gone'));
+    const secondResult = await scheduler.runSync?.();
+
+    // The daemon resumes from the last confirmed autoSync instead of exiting.
+    expect(secondResult).toBe(true);
+    expect(process.exitCode).toBe(1);
+  });
+
   it('resets exitCode to 0 once a failed iteration recovers', async () => {
     const { fetchAllRecords } = await import('@/libs/records.js');
     const { fetchSettings } = await import('@/libs/settings.js');
