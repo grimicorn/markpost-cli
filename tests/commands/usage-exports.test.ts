@@ -1,4 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// The real command modules chain into libs/config.ts, which builds a `Conf`
+// store at module scope (reads/writes the developer's real config dir on
+// import). Mock it so importing for the USAGE exports has no filesystem side
+// effect — USAGE itself is defined in each command module, so it stays real.
+vi.mock('@/libs/config.js', () => ({
+  checkConfig: vi.fn(),
+  config: { get: vi.fn(), set: vi.fn() },
+}));
 
 import { USAGE as PUSH_USAGE } from '@/commands/push.js';
 import { USAGE as GET_USAGE } from '@/commands/get.js';

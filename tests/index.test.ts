@@ -204,6 +204,31 @@ describe('index', () => {
     },
   );
 
+  it('prints only the targeted command usage for "help <command>"', async () => {
+    process.argv = ['node', 'index.js', 'help', 'sync'];
+
+    await import('@/index.js');
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Usage: markpost sync'),
+    );
+    expect(console.log).not.toHaveBeenCalledWith(
+      expect.stringContaining('Usage: markpost push'),
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('falls back to the full help for an unknown help topic', async () => {
+    process.argv = ['node', 'index.js', 'help', 'bogus'];
+
+    await import('@/index.js');
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Usage: markpost <command>'),
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
   it('prints help, fails loud, and never runs the destructive sync when invoked with no arguments', async () => {
     process.argv = ['node', 'index.js'];
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');

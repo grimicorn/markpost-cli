@@ -89,10 +89,18 @@ const HELP_TEXT = [
   'Run `markpost help` (or `--help`) to see this message.',
 ].join('\n');
 
+// A top-level help request optionally targets one command: `markpost help
+// sync` prints just the sync usage. An unrecognized topic falls back to the
+// full help rather than erroring — a help request should stay helpful.
+function printHelp(topic: string | undefined): void {
+  const command = topic ? COMMANDS.get(topic) : undefined;
+  console.log(command ? command.usage : HELP_TEXT);
+}
+
 async function dispatch(): Promise<void> {
   // An explicit top-level help request is a success: print to stdout, exit 0.
   if (HELP_COMMANDS.has(commandName)) {
-    console.log(HELP_TEXT);
+    printHelp(commandArgs[0]);
     return;
   }
 
