@@ -397,7 +397,10 @@ describe('fetchPaginatedRecords', () => {
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('calls fetch with page[size] only when no cursor is given', async () => {
+  // Regression coverage for #50: without filter[status]=pending the server
+  // returns synced records too, so already-written records are re-fetched and
+  // re-written as `-2`/`-3` duplicates every run.
+  it('scopes the fetch to pending records via filter[status] when no cursor is given', async () => {
     mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
     await fetchPaginatedRecords();
     expect(global.fetch).toHaveBeenCalledWith(
@@ -406,16 +409,6 @@ describe('fetchPaginatedRecords', () => {
         headers: { Authorization: 'Bearer test-token' },
       }),
     );
-  });
-
-  // Regression coverage for #50: without filter[status]=pending the server
-  // returns synced records too, so already-written records are re-fetched and
-  // re-written as `-2`/`-3` duplicates every run.
-  it('scopes the fetch to pending records via filter[status]', async () => {
-    mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
-    await fetchPaginatedRecords();
-    const requestedUrl = vi.mocked(global.fetch).mock.calls[0]?.[0];
-    expect(requestedUrl).toContain('filter[status]=pending');
   });
 
   it('calls fetch with the cursor and page[size] and auth header', async () => {
@@ -760,27 +753,47 @@ describe('markRecordSynced', () => {
     ).toBe(false);
   });
 
-  it('returns the updated record attributes on success', async () => {
+  it('returns true on success', async () => {
     mockFetch({ data: { attributes: mockRecord } });
-    expect(
-      await markRecordSynced('abc-123', '/vault/test-title.md'),
-    ).toEqual(mockRecord);
+    expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
+      true,
+    );
   });
 
-  it('returns null when the response contains errors', async () => {
+  // A 2xx that carries no resource body (or an empty body markpost may return
+  // on a successful PATCH) must count as success, not a spurious failure that
+  // warns the user of duplicates that never appear.
+  it('returns true for a 2xx response with a null data body', async () => {
+    mockFetch({ data: null });
+    expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
+      true,
+    );
+  });
+
+  it('returns true for a 2xx response with an empty body', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.reject(new Error('Unexpected end of JSON input')),
+    });
+    expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
+      true,
+    );
+  });
+
+  it('returns false when the response contains errors', async () => {
     mockFetch(
       { data: { errors: [{ title: 'Not Found', detail: 'Record missing' }] } },
       false,
     );
-    expect(
-      await markRecordSynced('abc-123', '/vault/test-title.md'),
-    ).toBeNull();
+    expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
+      false,
+    );
   });
 
-  it('returns null on network failure', async () => {
+  it('returns false on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(
-      await markRecordSynced('abc-123', '/vault/test-title.md'),
-    ).toBeNull();
+    expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
+      false,
+    );
   });
 });

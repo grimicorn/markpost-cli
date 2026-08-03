@@ -230,11 +230,16 @@ export const createRecord = async (
 // from re-writing it. `syncedAt` is injected (defaulting to now) so callers
 // and tests can pin the timestamp. Content-Type mirrors createRecord/
 // deleteRecords for consistency; markpost reads the body regardless.
+//
+// Returns a plain success boolean rather than the updated record: the caller
+// only needs to know whether the server accepted the change. Reading it back
+// as a resource would mis-report a legitimate 2xx that carries no `data`
+// (or an empty body) as a failure, wrongly warning the user of duplicates.
 export const markRecordSynced = async (
   uuid: string,
   filePath: string,
   syncedAt: string = new Date().toISOString(),
-): Promise<Record | null> => {
+): Promise<boolean> => {
   try {
     const response = await fetch(`${getBaseUrl()}/api/records/${uuid}`, {
       method: 'PATCH',
@@ -254,17 +259,20 @@ export const markRecordSynced = async (
       }),
     });
 
-    const body = (await response.json()) as RecordApiResponse;
+    // A successful PATCH can legitimately return an empty body, which would
+    // make `response.json()` throw; fall back to `{}` so only real HTTP/error
+    // responses (caught by assertApiSuccess) count as failures.
+    const body = (await response.json().catch(() => ({}))) as RecordApiResponse;
     assertApiSuccess(response, body);
 
-    return unwrapResourceAttributes(body);
+    return true;
   } catch (error) {
     logErrorMessage(
       `markRecordSynced["${uuid}"]`,
       error instanceof Error ? error.message : String(error),
     );
 
-    return null;
+    return false;
   }
 };
 

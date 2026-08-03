@@ -24,6 +24,14 @@ import {
 
 type Spinner = ReturnType<typeof yoctoSpinner>;
 
+// Cap how many mark-synced PATCHes are in flight at once. A large first sync
+// can write hundreds of records; firing one unbounded `Promise.all` over all
+// of them risks rate-limit/connection failures exactly when the batch is
+// biggest — and every failed mark stays pending and re-duplicates next run.
+// Declared here (above the top-level `runDefaultSync()` call) so the hoisted
+// helpers don't hit its temporal dead zone when the default sync runs.
+const MARK_SYNCED_CONCURRENCY = 10;
+
 const [command, ...commandArgs] = process.argv.slice(2);
 
 // One source of truth for dispatch: adding a command here is enough, unlike
@@ -82,30 +90,62 @@ function writeRecords(
     .filter((written): written is WrittenRecord => written.filePath !== null);
 }
 
+// PATCHes the written records synced in bounded-concurrency batches, returning
+// a success flag per record in the original order.
+async function markRecordsInBatches(
+  writtenRecords: WrittenRecord[],
+): Promise<boolean[]> {
+  const results: boolean[] = [];
+
+  for (
+    let start = 0;
+    start < writtenRecords.length;
+    start += MARK_SYNCED_CONCURRENCY
+  ) {
+    const batch = writtenRecords.slice(start, start + MARK_SYNCED_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(({ record, filePath }) =>
+        markRecordSynced(record.uuid, filePath),
+      ),
+    );
+
+    results.push(...batchResults);
+  }
+
+  return results;
+}
+
+// Surfaces mark-synced failures loudly (never as success): an unmarked record
+// stays pending and gets re-written as a duplicate next run, so the user needs
+// to know which files are affected.
+function reportMarkFailures(failures: WrittenRecord[], spinner: Spinner): void {
+  spinner.error(
+    `Failed to mark ${failures.length} record(s) synced — written locally but still pending on the server; they may be re-written next run.`,
+  );
+  failures.forEach(({ record, filePath }) => {
+    console.log(chalk.dim(`  ! ${record.uuid} -> ${filePath}`));
+  });
+  process.exitCode = 1;
+}
+
 // Marks every written record synced on the server after a write, so the next
 // run's pending-only fetch skips them — the autoDelete-off path's
-// non-destructive equivalent of the delete step. Failures are surfaced loudly
-// rather than reported as success: an unmarked record stays pending and gets
-// re-written as a duplicate next run, so the user needs to know.
+// non-destructive equivalent of the delete step.
 async function markWrittenRecordsSynced(
   writtenRecords: WrittenRecord[],
   spinner: Spinner,
 ): Promise<void> {
+  if (writtenRecords.length === 0) {
+    return;
+  }
+
   spinner.start('Marking records synced...');
 
-  const results = await Promise.all(
-    writtenRecords.map(({ record, filePath }) =>
-      markRecordSynced(record.uuid, filePath),
-    ),
-  );
+  const results = await markRecordsInBatches(writtenRecords);
+  const failures = writtenRecords.filter((_written, index) => !results[index]);
 
-  const failedCount = results.filter((result) => !result).length;
-
-  if (failedCount > 0) {
-    spinner.error(
-      `Failed to mark ${failedCount} record(s) synced — written locally but still pending on the server; they may be re-written next run.`,
-    );
-    process.exitCode = 1;
+  if (failures.length > 0) {
+    reportMarkFailures(failures, spinner);
     return;
   }
 
@@ -177,24 +217,13 @@ async function runDefaultSync(): Promise<void> {
       );
     }
 
-    // autoDelete off + settings unreadable: we don't know the real autoDelete
-    // preference, so mutate nothing on the server (see the warning above). The
-    // records stay pending and are retried once settings are reachable — the
-    // same conservative stance the delete step takes for an unknown state.
-    if (!autoDelete && !settingsResult.ok) {
-      console.log(
-        chalk.dim('  autoDelete is off — records left on the server.'),
-      );
-      return;
-    }
-
-    // autoDelete off + settings read: mark the written records synced so the
-    // next run's pending-only fetch skips them instead of re-writing duplicate
-    // files. Nothing written means nothing to mark.
-    if (!autoDelete && writtenRecords.length === 0) {
-      return;
-    }
-
+    // autoDelete off: mark the written records synced so the next run's
+    // pending-only fetch skips them instead of re-writing duplicate files.
+    // This runs even when settings couldn't be read (autoDelete defaults off
+    // there): marking synced is a reversible status flip on content already
+    // safely on disk, unlike the irreversible delete below — so the caution
+    // that gates delete on a known autoDelete doesn't apply, and skipping it
+    // would re-introduce the very duplicate-file bug this fixes.
     if (!autoDelete) {
       await markWrittenRecordsSynced(writtenRecords, spinner);
       return;
