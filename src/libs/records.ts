@@ -70,11 +70,53 @@ const extractAfterCursor = (
   return undefined;
 };
 
-export const fetchAllRecords = async (): Promise<Record[]> => {
-  const initial = await fetchPaginatedRecords();
+// The list filters markpost's `GET /api/records` validates and applies (see
+// markpost `server/api/records/index.get.ts`): `filter[source]`,
+// `filter[status]`, and `filter[q]`. The CLI passes the raw values straight
+// through and does not re-implement the server's validation logic here (an
+// invalid `filter[source]` is rejected server-side and surfaced); markpost
+// stays the single source of truth for which values are allowed, so the two
+// can't drift.
+export type RecordListFilters = {
+  source?: string;
+  status?: string;
+  search?: string;
+};
 
+// Maps each CLI filter to the exact query-param name markpost expects. `q`
+// (not `search`) is markpost's title/content search parameter.
+// A mapped type, not `Record<...>`: this module imports a `Record` record
+// type from records.types.js, which shadows TypeScript's global `Record`
+// utility.
+const FILTER_QUERY_KEYS: { [Key in keyof RecordListFilters]-?: string } = {
+  source: 'filter[source]',
+  status: 'filter[status]',
+  search: 'filter[q]',
+};
+
+const DEFAULT_PAGE_SIZE = 100;
+
+export const fetchAllRecords = async (
+  filters: RecordListFilters = {},
+): Promise<Record[]> => {
+  const initial = await fetchPaginatedRecords(
+    undefined,
+    DEFAULT_PAGE_SIZE,
+    filters,
+  );
+
+  // Throw rather than return `[]` so the caller can tell a failed request
+  // apart from a genuinely empty result. This matters most for filtered
+  // listings: markpost rejects an invalid `filter[source]` with a 400, and
+  // returning `[]` here would render that as "No records found.", a silent
+  // failure. fetchPaginatedRecords has already logged the underlying cause;
+  // the command's catch surfaces this message and exits non-zero. A
+  // subsequent-page failure still returns the pages already collected (the
+  // error is logged) so partial progress isn't discarded.
   if (!initial) {
-    return [];
+    throw new Error(
+      'Could not fetch records from markpost. See the error above.',
+    );
   }
 
   const records = [initial.records];
@@ -86,7 +128,11 @@ export const fetchAllRecords = async (): Promise<Record[]> => {
   // an unbounded stream of duplicate records.
   while (after && !seenCursors.has(after)) {
     seenCursors.add(after);
-    const subsequent = await fetchPaginatedRecords(after);
+    const subsequent = await fetchPaginatedRecords(
+      after,
+      DEFAULT_PAGE_SIZE,
+      filters,
+    );
 
     if (!subsequent) {
       break;
@@ -99,17 +145,38 @@ export const fetchAllRecords = async (): Promise<Record[]> => {
   return records.flat(1) as Record[];
 };
 
-const buildRecordsQuery = (size: number, after?: string): string => {
-  if (!after) {
-    return `page[size]=${size}`;
+const buildRecordsQuery = (
+  size: number,
+  after: string | undefined,
+  filters: RecordListFilters,
+): string => {
+  const params = [`page[size]=${size}`];
+
+  if (after) {
+    params.push(`page[after]=${encodeURIComponent(after)}`);
   }
 
-  return `page[size]=${size}&page[after]=${encodeURIComponent(after)}`;
+  const filterKeys = Object.keys(
+    FILTER_QUERY_KEYS,
+  ) as (keyof RecordListFilters)[];
+
+  for (const filterKey of filterKeys) {
+    const value = filters[filterKey];
+
+    if (!value) {
+      continue;
+    }
+
+    params.push(`${FILTER_QUERY_KEYS[filterKey]}=${encodeURIComponent(value)}`);
+  }
+
+  return params.join('&');
 };
 
 export const fetchPaginatedRecords = async (
   after?: string,
-  size: number = 100,
+  size: number = DEFAULT_PAGE_SIZE,
+  filters: RecordListFilters = {},
 ): Promise<{
   records: Record[];
   meta: PaginatedRecordsMeta;
@@ -117,7 +184,7 @@ export const fetchPaginatedRecords = async (
 } | null> => {
   try {
     const response = await fetch(
-      `${getBaseUrl()}/api/records?${buildRecordsQuery(size, after)}`,
+      `${getBaseUrl()}/api/records?${buildRecordsQuery(size, after, filters)}`,
       {
         headers: {
           Authorization: `Bearer ${getApiToken()}`,
