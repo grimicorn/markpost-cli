@@ -251,6 +251,35 @@ describe('index', () => {
     },
   );
 
+  it.each([
+    ['push', '--help'],
+    ['get', '-h'],
+    ['sources', '--help'],
+    ['records', '-h'],
+  ])(
+    'prints %s usage for "%s %s" without invoking the command handler',
+    async (name, helpFlag) => {
+      process.argv = ['node', 'index.js', name, helpFlag];
+      const pushModule = await import('@/commands/push.js');
+      const getModule = await import('@/commands/get.js');
+      const sourcesModule = await import('@/commands/sources.js');
+      const recordsModule = await import('@/commands/records.js');
+
+      await import('@/index.js');
+
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining(`Usage: markpost ${name}`),
+      );
+      // A help flag must short-circuit before the handler runs, so no config
+      // check or API call happens.
+      expect(pushModule.runPushCommand).not.toHaveBeenCalled();
+      expect(getModule.runGetCommand).not.toHaveBeenCalled();
+      expect(sourcesModule.runSourcesCommand).not.toHaveBeenCalled();
+      expect(recordsModule.runRecordsCommand).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
+    },
+  );
+
   it('errors and skips the sync when the sync command is given unexpected arguments', async () => {
     process.argv = ['node', 'index.js', 'sync', 'oops'];
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');

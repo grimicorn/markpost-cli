@@ -24,7 +24,7 @@ import {
   normalizeConflictStrategy,
 } from '@/types/settings.types.js';
 
-const [command, ...commandArgs] = process.argv.slice(2);
+const [commandName, ...commandArgs] = process.argv.slice(2);
 
 const SYNC_COMMAND = 'sync';
 
@@ -36,33 +36,35 @@ const SYNC_USAGE = `Usage: markpost sync
   Fetch all pending records, write each to a markdown file, and (when
   autoDelete is enabled) delete the written records from the server`;
 
-// Aliases that print help instead of dispatching a command.
-const HELP_FLAGS = new Set(['help', '--help', '-h']);
+// Tokens in the command position that print top-level help instead of running
+// a command. `help` is only a command word — as a sub-argument it could be a
+// real path, so per-command help below accepts flags only.
+const HELP_COMMANDS = new Set(['help', '--help', '-h']);
+const HELP_FLAG_ARGS = new Set(['--help', '-h']);
 
-// One source of truth for dispatch: adding a command here is enough, unlike
-// a parallel list of `if (command === 'x')` blocks plus a separately
-// maintained "known commands" array that can drift out of sync.
-// A Map (rather than a plain object) means a command named "toString" or
-// "constructor" can't accidentally resolve to an inherited Object.prototype
-// member instead of falling through to the "unknown command" branch.
-const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
-  ['push', runPushCommand],
-  ['get', runGetCommand],
-  ['sources', runSourcesCommand],
-  ['records', runRecordsCommand],
-  [SYNC_COMMAND, runSyncCommand],
+interface Command {
+  run: (args: string[]) => Promise<void>;
+  usage: string;
+}
+
+// Single source of truth for dispatch, per-command help, and the aggregated
+// top-level help: adding a command here wires up all three. A Map (rather than
+// a plain object) means a command named "toString" or "constructor" can't
+// resolve to an inherited Object.prototype member instead of falling through
+// to the "unknown command" branch.
+const COMMANDS = new Map<string, Command>([
+  [SYNC_COMMAND, { run: runSyncCommand, usage: SYNC_USAGE }],
+  ['push', { run: runPushCommand, usage: PUSH_USAGE }],
+  ['get', { run: runGetCommand, usage: GET_USAGE }],
+  ['sources', { run: runSourcesCommand, usage: SOURCES_USAGE }],
+  ['records', { run: runRecordsCommand, usage: RECORDS_USAGE }],
 ]);
 
-// The sync is the one destructive command, so it validates its own arguments
-// rather than ignoring them: `markpost sync --help` prints usage, and an
-// unrecognized argument (a typo, a stray flag) errors out instead of silently
-// fetching, writing, and deleting server records.
+// The sync is the one destructive command, so it rejects unexpected arguments
+// (a typo, a stray flag) rather than ignoring them and silently fetching,
+// writing, and deleting server records. `--help`/`-h` are intercepted before
+// this runs (see dispatch), so anything reaching here is a genuine mistake.
 async function runSyncCommand(args: string[]): Promise<void> {
-  if (args.some((arg) => HELP_FLAGS.has(arg))) {
-    console.log(SYNC_USAGE);
-    return;
-  }
-
   if (args.length > 0) {
     console.error(chalk.redBright(`Unexpected arguments: ${args.join(' ')}`));
     console.error(SYNC_USAGE);
@@ -73,42 +75,33 @@ async function runSyncCommand(args: string[]): Promise<void> {
   await runDefaultSync();
 }
 
-// Aggregate each subcommand's own USAGE string rather than maintaining a
-// second, hand-written help blob that would drift as commands change — each
-// command owns the single source of truth for its own usage.
+// Aggregate each command's own USAGE string rather than maintaining a second,
+// hand-written help blob that would drift — each command owns the single
+// source of truth for its own usage, and this reads straight from COMMANDS.
 const HELP_TEXT = [
   'markpost — sync markdown records with your markpost account',
   '',
   'Usage: markpost <command> [options]',
   '',
   'Commands:',
-  '',
-  SYNC_USAGE,
-  '',
-  PUSH_USAGE,
-  '',
-  GET_USAGE,
-  '',
-  SOURCES_USAGE,
-  '',
-  RECORDS_USAGE,
+  ...[...COMMANDS.values()].flatMap((command) => ['', command.usage]),
   '',
   'Run `markpost help` (or `--help`) to see this message.',
 ].join('\n');
 
 async function dispatch(): Promise<void> {
-  // An explicit help request is a success: print to stdout and exit 0.
-  if (HELP_FLAGS.has(command)) {
+  // An explicit top-level help request is a success: print to stdout, exit 0.
+  if (HELP_COMMANDS.has(commandName)) {
     console.log(HELP_TEXT);
     return;
   }
 
-  // A bare `markpost` with no subcommand prints help but fails loud (stderr +
-  // non-zero exit): it never runs the destructive sync, and because bare
-  // `markpost` used to be the sync trigger, a silent exit 0 would let a cron
-  // job or wrapper "succeed" while quietly syncing nothing. Run `markpost
-  // sync` to sync on purpose.
-  if (command === undefined) {
+  // A bare `markpost` (no command, or an empty-string arg) prints help but
+  // fails loud (stderr + non-zero exit): it never runs the destructive sync,
+  // and because bare `markpost` used to be the sync trigger, a silent exit 0
+  // would let a cron job or wrapper "succeed" while quietly syncing nothing.
+  // Run `markpost sync` to sync on purpose.
+  if (!commandName) {
     console.error(HELP_TEXT);
     console.error(
       chalk.redBright('No command given. Run `markpost sync` to sync records.'),
@@ -117,12 +110,12 @@ async function dispatch(): Promise<void> {
     return;
   }
 
-  const commandHandler = COMMAND_HANDLERS.get(command);
+  const command = COMMANDS.get(commandName);
 
-  // An unrecognized subcommand errors out rather than falling through to the
+  // An unrecognized command errors out rather than falling through to the
   // sync that deletes server records.
-  if (!commandHandler) {
-    console.error(chalk.redBright(`Unknown command: ${command}`));
+  if (!command) {
+    console.error(chalk.redBright(`Unknown command: ${commandName}`));
     console.error(
       chalk.dim('Run `markpost help` to see the available commands.'),
     );
@@ -130,7 +123,16 @@ async function dispatch(): Promise<void> {
     return;
   }
 
-  await commandHandler(commandArgs);
+  // Per-command help: `markpost <command> --help` prints that command's usage
+  // with no side effects (no config check, no API call). Handled centrally so
+  // every command supports it, not just the ones that happen to print usage on
+  // a bad sub-argument.
+  if (commandArgs.some((arg) => HELP_FLAG_ARGS.has(arg))) {
+    console.log(command.usage);
+    return;
+  }
+
+  await command.run(commandArgs);
 }
 
 await dispatch();
