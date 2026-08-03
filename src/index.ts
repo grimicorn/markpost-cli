@@ -2,7 +2,7 @@
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
-import { fetchSettings } from '@/libs/settings.js';
+import { fetchSettings, resolveSyncSettings } from '@/libs/settings.js';
 import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
 import { runSourcesCommand } from '@/commands/sources.js';
@@ -16,13 +16,7 @@ import {
   runSyncWithAutoSchedule,
 } from '@/libs/scheduler.js';
 import { Record } from '@/types/records.types.js';
-import {
-  ConflictStrategy,
-  normalizeAutoDelete,
-  normalizeAutoSync,
-  normalizeConflictStrategy,
-  normalizeFrontmatterEnabled,
-} from '@/types/settings.types.js';
+import { ConflictStrategy } from '@/types/settings.types.js';
 
 // Declared before the top-level command dispatch below: that dispatch awaits
 // runDefaultSync during module evaluation, so any module const it reads must
@@ -30,6 +24,10 @@ import {
 // zone when the sync runs).
 const MS_PER_MINUTE = 60_000;
 const AUTO_SYNC_INTERVAL_MINUTES = AUTO_SYNC_INTERVAL_MS / MS_PER_MINUTE;
+
+// One-shot guard so the daemon announces autoSync mode once per process rather
+// than reprinting the banner on every scheduled iteration.
+let autoSyncAnnounced = false;
 
 const [command, ...commandArgs] = process.argv.slice(2);
 
@@ -96,6 +94,23 @@ function writeRecords(
     .filter((written): written is WrittenRecord => written.filePath !== null);
 }
 
+// autoSync turns the CLI into a self-scheduling daemon, so a bare `markpost`
+// invocation won't return. Announce it once per process (not on every
+// scheduled iteration) so the user knows the process is intentionally staying
+// alive without spamming the banner every interval.
+function announceAutoSync(autoSync: boolean): void {
+  if (!autoSync || autoSyncAnnounced) {
+    return;
+  }
+
+  autoSyncAnnounced = true;
+  console.log(
+    chalk.dim(
+      `  autoSync is on — will re-sync every ${AUTO_SYNC_INTERVAL_MINUTES}m (Ctrl-C to stop).`,
+    ),
+  );
+}
+
 // Default behavior when no subcommand is given: read the user's markpost
 // settings, fetch all records, write each to a markdown file honoring the
 // conflict strategy, then (only if autoDelete is on) delete the records that
@@ -108,6 +123,12 @@ async function runDefaultSync(): Promise<boolean> {
   // failed to whatever supervises the process.
   process.exitCode = 0;
 
+  // Hoisted so the catch can still report the sync mode: a transient error in
+  // one iteration must not silently stop a self-scheduling daemon. Stays
+  // `false` until settings are read, so a failure before that (bad config,
+  // unreachable settings) does not spin up the loop.
+  let autoSync = false;
+
   try {
     await checkConfig();
 
@@ -117,25 +138,15 @@ async function runDefaultSync(): Promise<boolean> {
     // server records is irreversible, so an unknown state must not fall
     // through to "delete". A successful read with no saved row (`settings:
     // null`) is a real account default, so it uses markpost's defaults
-    // silently.
+    // silently. resolveSyncSettings owns those fallbacks (see settings.ts).
     const settingsResult = await fetchSettings();
-    const settings = settingsResult.ok ? settingsResult.settings : null;
-    const conflictStrategy = normalizeConflictStrategy(
-      settings?.conflictStrategy,
-    );
-    const autoDelete = settingsResult.ok
-      ? normalizeAutoDelete(settings?.autoDelete)
-      : false;
-    // A failed settings read leaves autoSync off: without confirmed settings
-    // we don't spin up a self-scheduling daemon (mirrors the conservative
-    // autoDelete above). Frontmatter defaults to on — the safe,
-    // non-destructive default, matching how conflictStrategy falls back.
-    const autoSync = settingsResult.ok
-      ? normalizeAutoSync(settings?.autoSync)
-      : false;
-    const includeFrontmatter = settingsResult.ok
-      ? normalizeFrontmatterEnabled(settings?.frontmatter)
-      : true;
+    const {
+      conflictStrategy,
+      autoDelete,
+      autoSync: resolvedAutoSync,
+      includeFrontmatter,
+    } = resolveSyncSettings(settingsResult);
+    autoSync = resolvedAutoSync;
 
     if (!settingsResult.ok) {
       console.log(
@@ -145,23 +156,16 @@ async function runDefaultSync(): Promise<boolean> {
       );
     }
 
-    // autoSync turns the CLI into a self-scheduling daemon, so a bare
-    // `markpost` invocation won't return. Announce the mode up front so the
-    // user knows the process is intentionally staying alive.
-    if (autoSync) {
-      console.log(
-        chalk.dim(
-          `  autoSync is on — will re-sync every ${AUTO_SYNC_INTERVAL_MINUTES}m (Ctrl-C to stop).`,
-        ),
-      );
-    }
+    announceAutoSync(autoSync);
 
     // Fetch records
     spinner.start('Fetching records...');
     const allRecords = await fetchAllRecords();
 
     if (allRecords.length === 0) {
-      spinner.success('No new records, exiting...');
+      spinner.success(
+        autoSync ? 'No new records.' : 'No new records, exiting...',
+      );
       return autoSync;
     }
 
@@ -227,8 +231,10 @@ async function runDefaultSync(): Promise<boolean> {
     spinner.error('Something went wrong!');
     console.error(chalk.redBright(error));
     process.exitCode = 1;
-    // Don't self-schedule after an unexpected failure — a crashing run
-    // shouldn't spin a daemon that just keeps crashing.
-    return false;
+    // Keep the daemon alive across a transient failure (a network blip
+    // shouldn't end an autoSync session); the next iteration resets exitCode
+    // and retries. `autoSync` is still `false` if we failed before reading
+    // settings, so a run that never got that far won't start looping.
+    return autoSync;
   }
 }

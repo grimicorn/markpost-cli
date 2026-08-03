@@ -7,21 +7,32 @@ import { SettingsReadResult } from '@/libs/settings.js';
 vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
-vi.mock('@/libs/settings.js', () => ({ fetchSettings: vi.fn() }));
+// Keep the real resolveSyncSettings (the fallback logic under test) and only
+// stub the network read.
+vi.mock('@/libs/settings.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/libs/settings.js')>();
+  return { ...actual, fetchSettings: vi.fn() };
+});
 // Run the sync once synchronously instead of arming a real timer, and capture
 // what runDefaultSync reports back so tests can assert the autoSync decision
 // (a mock that discarded the return value would let a constant stand in for
-// normalizeAutoSync). The scheduling logic itself lives in
+// the resolver). Spread the real module so the interval constant stays in sync
+// with scheduler.ts; the scheduling logic itself lives in
 // tests/libs/scheduler.test.ts.
 const scheduler = vi.hoisted(() => ({
   lastSyncResult: undefined as boolean | undefined,
 }));
-vi.mock('@/libs/scheduler.js', () => ({
-  AUTO_SYNC_INTERVAL_MS: 5 * 60 * 1000,
-  runSyncWithAutoSchedule: vi.fn(async (runSync: () => Promise<boolean>) => {
-    scheduler.lastSyncResult = await runSync();
-  }),
-}));
+vi.mock('@/libs/scheduler.js', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/libs/scheduler.js')>();
+  return {
+    ...actual,
+    runSyncWithAutoSchedule: vi.fn(async (runSync: () => Promise<boolean>) => {
+      scheduler.lastSyncResult = await runSync();
+    }),
+  };
+});
 vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
 vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
 vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
@@ -235,9 +246,15 @@ describe('index', () => {
   it('exits early when no records are fetched', async () => {
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    // autoSync off so this exercises the true "exiting" path (with autoSync on
+    // the process stays alive and the message differs).
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoSync: false }),
+    );
     vi.mocked(fetchAllRecords).mockResolvedValue([]);
 
     await import('@/index.js');
@@ -437,7 +454,7 @@ describe('index', () => {
     expect(scheduler.lastSyncResult).toBe(false);
   });
 
-  it('reports autoSync off to the scheduler when the sync throws', async () => {
+  it('keeps autoSync on across a transient failure so the daemon survives one throw', async () => {
     const { fetchAllRecords } = await import('@/libs/records.js');
     const { fetchSettings } = await import('@/libs/settings.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');
@@ -448,8 +465,29 @@ describe('index', () => {
 
     await import('@/index.js');
 
+    // The throw sets exitCode=1, but autoSync stays reported so the scheduler
+    // retries next iteration instead of ending the session on a network blip.
+    expect(scheduler.lastSyncResult).toBe(true);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('reports autoSync off when the failure happens before settings are read', async () => {
+    const { checkConfig } = await import('@/libs/config.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(checkConfig).mockRejectedValue(new Error('No config'));
+
+    await import('@/index.js');
+
+    // Failing before the settings read leaves autoSync false, so a run that
+    // never got that far won't start a daemon loop.
     expect(scheduler.lastSyncResult).toBe(false);
     expect(process.exitCode).toBe(1);
+
+    // clearAllMocks doesn't reset implementations, so restore checkConfig or
+    // it would keep rejecting in later tests.
+    vi.mocked(checkConfig).mockResolvedValue(undefined);
   });
 
   it('does not delete records when autoDelete is false', async () => {

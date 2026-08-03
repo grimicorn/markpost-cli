@@ -53,6 +53,31 @@ describe('runSyncWithAutoSchedule', () => {
     expect(schedule).toHaveBeenCalledTimes(1);
   });
 
+  it('logs and stops the loop when a scheduled re-run rejects, without a second schedule', async () => {
+    const runSync = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockRejectedValueOnce(new Error('network down'));
+    let scheduledCallback: (() => void) | undefined;
+    const schedule: ScheduleFn = vi.fn((callback) => {
+      scheduledCallback = callback;
+    });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const originalExitCode = process.exitCode;
+
+    await runSyncWithAutoSchedule(runSync, schedule);
+    scheduledCallback?.();
+
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalled());
+    expect(process.exitCode).toBe(1);
+    // The rejecting re-run never reaches the schedule call, so no further timer
+    // is armed — the loop stops rather than crashing on an unhandled rejection.
+    expect(schedule).toHaveBeenCalledTimes(1);
+
+    process.exitCode = originalExitCode;
+    errorSpy.mockRestore();
+  });
+
   it('honors a custom interval', async () => {
     const runSync = vi.fn().mockResolvedValue(true);
     const schedule: ScheduleFn = vi.fn();
