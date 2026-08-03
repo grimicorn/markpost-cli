@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   AUTO_SYNC_INTERVAL_MS,
+  defaultSchedule,
   runSyncWithAutoSchedule,
   type ScheduleFn,
 } from '@/libs/scheduler.js';
@@ -60,5 +61,22 @@ describe('runSyncWithAutoSchedule', () => {
     await runSyncWithAutoSchedule(runSync, schedule, customInterval);
 
     expect(schedule).toHaveBeenCalledWith(expect.any(Function), customInterval);
+  });
+});
+
+describe('defaultSchedule', () => {
+  it('arms a ref-holding timer so a pending sync keeps the CLI process alive', () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    const callback = vi.fn();
+
+    defaultSchedule(callback, AUTO_SYNC_INTERVAL_MS);
+
+    const timer = setTimeoutSpy.mock.results[0].value as NodeJS.Timeout;
+    // A regression to `.unref()` would let the process exit before the timer
+    // fires, making autoSync a no-op — assert the handle still holds the loop.
+    expect(timer.hasRef()).toBe(true);
+
+    clearTimeout(timer);
+    setTimeoutSpy.mockRestore();
   });
 });

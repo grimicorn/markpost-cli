@@ -65,37 +65,28 @@ export const normalizeConflictStrategy = (
   return DEFAULT_CONFLICT_STRATEGY;
 };
 
-// `autoDelete` gates an irreversible server-side delete, so an off-contract
-// wire value must not slip through as truthy (e.g. the string "false", which
-// is truthy). Only an actual boolean is trusted; anything else falls back to
-// the documented default.
+// Each of these settings gates a behavior on a strict boolean: an off-contract
+// wire value (e.g. the string "false", which is truthy) must not slip through
+// as truthy — `autoDelete` gates an irreversible server-side delete, `autoSync`
+// decides whether the CLI self-schedules, `frontmatter` whether a YAML block is
+// written. Only an actual boolean is trusted; anything else falls back to the
+// documented default.
+const normalizeBoolean = (value: unknown, fallback: boolean): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  return fallback;
+};
+
 export const normalizeAutoDelete = (value: unknown): boolean => {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-
-  return DEFAULT_AUTO_DELETE;
+  return normalizeBoolean(value, DEFAULT_AUTO_DELETE);
 };
 
-// `autoSync` decides whether the CLI self-schedules another sync, so an
-// off-contract wire value (e.g. the string "false", which is truthy) must not
-// slip through as truthy. Only an actual boolean is trusted; anything else
-// falls back to the documented default.
 export const normalizeAutoSync = (value: unknown): boolean => {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-
-  return DEFAULT_AUTO_SYNC;
+  return normalizeBoolean(value, DEFAULT_AUTO_SYNC);
 };
 
-// `frontmatter` gates whether synced files carry a YAML frontmatter block.
-// As with the other flags, only a real boolean is trusted so an off-contract
-// wire value can't flip the behavior; anything else falls back to the default.
 export const normalizeFrontmatterEnabled = (value: unknown): boolean => {
-  if (typeof value === 'boolean') {
-    return value;
-  }
-
-  return DEFAULT_FRONTMATTER_ENABLED;
+  return normalizeBoolean(value, DEFAULT_FRONTMATTER_ENABLED);
 };

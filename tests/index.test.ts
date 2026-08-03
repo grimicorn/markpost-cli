@@ -8,11 +8,18 @@ vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
 vi.mock('@/libs/settings.js', () => ({ fetchSettings: vi.fn() }));
-// Run the sync once synchronously instead of arming a real timer: the
-// scheduling decision itself is covered in tests/libs/scheduler.test.ts.
+// Run the sync once synchronously instead of arming a real timer, and capture
+// what runDefaultSync reports back so tests can assert the autoSync decision
+// (a mock that discarded the return value would let a constant stand in for
+// normalizeAutoSync). The scheduling logic itself lives in
+// tests/libs/scheduler.test.ts.
+const scheduler = vi.hoisted(() => ({
+  lastSyncResult: undefined as boolean | undefined,
+}));
 vi.mock('@/libs/scheduler.js', () => ({
+  AUTO_SYNC_INTERVAL_MS: 5 * 60 * 1000,
   runSyncWithAutoSchedule: vi.fn(async (runSync: () => Promise<boolean>) => {
-    await runSync();
+    scheduler.lastSyncResult = await runSync();
   }),
 }));
 vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
@@ -43,6 +50,7 @@ describe('index', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    scheduler.lastSyncResult = undefined;
     mockSpinner = { start: vi.fn(), success: vi.fn(), error: vi.fn() };
     process.argv = ['node', 'index.js'];
     process.exitCode = undefined;
@@ -369,6 +377,79 @@ describe('index', () => {
     await import('@/index.js');
 
     expect(runSyncWithAutoSchedule).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it('reports autoSync on to the scheduler when the setting is enabled', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings({ autoSync: true }));
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(scheduler.lastSyncResult).toBe(true);
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('autoSync is on'),
+    );
+  });
+
+  it('reports autoSync off to the scheduler when the setting is disabled', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoSync: false }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(scheduler.lastSyncResult).toBe(false);
+    expect(console.log).not.toHaveBeenCalledWith(
+      expect.stringContaining('autoSync is on'),
+    );
+  });
+
+  it('reports autoSync off to the scheduler when settings cannot be read', async () => {
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue({ ok: false });
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+
+    await import('@/index.js');
+
+    expect(scheduler.lastSyncResult).toBe(false);
+  });
+
+  it('reports autoSync off to the scheduler when the sync throws', async () => {
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings({ autoSync: true }));
+    vi.mocked(fetchAllRecords).mockRejectedValue(new Error('Network error'));
+
+    await import('@/index.js');
+
+    expect(scheduler.lastSyncResult).toBe(false);
+    expect(process.exitCode).toBe(1);
   });
 
   it('does not delete records when autoDelete is false', async () => {

@@ -201,7 +201,7 @@ describe('writeMarkdown', () => {
     );
   });
 
-  it('writes bare content without a frontmatter block when frontmatter is disabled', () => {
+  it('writes the heading and body without a frontmatter block when frontmatter is disabled', () => {
     const syncedRecord: Record = {
       ...mockRecord,
       title: 'Deploy',
@@ -217,7 +217,7 @@ describe('writeMarkdown', () => {
     writeMarkdown(syncedRecord, 'suffix', new Set(), false);
 
     const [, writtenContent] = vi.mocked(writeFileSync).mock.calls[0];
-    expect(writtenContent).toBe('Commit shipped.');
+    expect(writtenContent).toBe('# Deploy\n\nCommit shipped.');
   });
 
   it('keeps the write inside outputDirectory when the title contains path separators', () => {

@@ -11,7 +11,10 @@ import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
-import { runSyncWithAutoSchedule } from '@/libs/scheduler.js';
+import {
+  AUTO_SYNC_INTERVAL_MS,
+  runSyncWithAutoSchedule,
+} from '@/libs/scheduler.js';
 import { Record } from '@/types/records.types.js';
 import {
   ConflictStrategy,
@@ -20,6 +23,13 @@ import {
   normalizeConflictStrategy,
   normalizeFrontmatterEnabled,
 } from '@/types/settings.types.js';
+
+// Declared before the top-level command dispatch below: that dispatch awaits
+// runDefaultSync during module evaluation, so any module const it reads must
+// already be initialized (a const declared lower would be in its temporal dead
+// zone when the sync runs).
+const MS_PER_MINUTE = 60_000;
+const AUTO_SYNC_INTERVAL_MINUTES = AUTO_SYNC_INTERVAL_MS / MS_PER_MINUTE;
 
 const [command, ...commandArgs] = process.argv.slice(2);
 
@@ -93,6 +103,10 @@ function writeRecords(
 // the scheduler can decide to repeat the sync (see runSyncWithAutoSchedule).
 async function runDefaultSync(): Promise<boolean> {
   const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
+  // Reset per iteration: in autoSync's daemon loop a transient failure that
+  // set exitCode=1 must not stick and mark a later, fully-successful run as
+  // failed to whatever supervises the process.
+  process.exitCode = 0;
 
   try {
     await checkConfig();
@@ -127,6 +141,17 @@ async function runDefaultSync(): Promise<boolean> {
       console.log(
         chalk.yellow(
           'Could not read settings — writing records but skipping the auto-delete this run. Re-run once settings are reachable.',
+        ),
+      );
+    }
+
+    // autoSync turns the CLI into a self-scheduling daemon, so a bare
+    // `markpost` invocation won't return. Announce the mode up front so the
+    // user knows the process is intentionally staying alive.
+    if (autoSync) {
+      console.log(
+        chalk.dim(
+          `  autoSync is on — will re-sync every ${AUTO_SYNC_INTERVAL_MINUTES}m (Ctrl-C to stop).`,
         ),
       );
     }

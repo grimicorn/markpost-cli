@@ -130,13 +130,15 @@ describe('buildRecordDocument', () => {
     expect(result).toContain('tags: [ci, deploy, incoming]');
   });
 
-  it('omits the frontmatter block and returns bare content when frontmatter is disabled', () => {
+  it('omits the frontmatter block but keeps the heading and body when frontmatter is disabled', () => {
     const result = buildRecordDocument(recordWithFrontmatter, false);
 
-    expect(result).toBe('Commit a1f9c20 shipped to prod.');
+    expect(result).toBe(
+      '# Production deploy succeeded\n\nCommit a1f9c20 shipped to prod.',
+    );
     expect(result).not.toContain('---');
     expect(result).not.toContain('title: Production deploy succeeded');
-    expect(result).not.toContain('# Production deploy succeeded');
+    expect(result).not.toContain('source: webhook/github');
   });
 
   it('includes the frontmatter block when frontmatter is enabled explicitly', () => {

@@ -9,11 +9,12 @@ export const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000;
 
 export type ScheduleFn = (callback: () => void, delayMs: number) => void;
 
-// Real scheduler: a plain `setTimeout`, unref'd so a pending self-sync timer
-// never keeps the process (or a test run) alive on its own — the daemon lives
-// only as long as there's other work holding the event loop open.
+// Real scheduler: a plain `setTimeout`. The timer is deliberately left ref'd —
+// it IS the work that keeps the CLI process alive between self-scheduled syncs.
+// Unref'ing it would let the process exit the moment the current run resolves,
+// so the next sync would never fire and autoSync would be a no-op.
 export const defaultSchedule: ScheduleFn = (callback, delayMs) => {
-  setTimeout(callback, delayMs).unref();
+  setTimeout(callback, delayMs);
 };
 
 // Runs one sync, then — only if that run reported `autoSync` on — schedules the
@@ -31,7 +32,14 @@ export const runSyncWithAutoSchedule = async (
     return;
   }
 
+  // The re-entry runs inside a timer callback with no surrounding try, so a
+  // rejecting `runSync` would surface as an unhandled rejection and take the
+  // process down. Attach a handler at the seam: log it and stop the loop
+  // rather than crash silently.
   schedule(() => {
-    void runSyncWithAutoSchedule(runSync, schedule, intervalMs);
+    runSyncWithAutoSchedule(runSync, schedule, intervalMs).catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
   }, intervalMs);
 };
