@@ -18,6 +18,12 @@ import {
   RecordListApiResponse,
 } from '@/types/records.types.js';
 
+// markpost's record lifecycle statuses (server/db/schema.ts RECORD_STATUSES).
+// The sync only ever wants records not yet written to disk, so it fetches
+// `pending` and, once a record is written, PATCHes it to `synced`.
+const PENDING_STATUS = 'pending';
+const SYNCED_STATUS = 'synced';
+
 // markpost paginates with a cursor: each response's `links.next` embeds the
 // `page[after]` cursor to request the following page, and is `null` once
 // `meta.hasMore` is false. Extracting it from the link (rather than
@@ -98,12 +104,6 @@ export const fetchAllRecords = async (): Promise<Record[]> => {
 
   return records.flat(1) as Record[];
 };
-
-// markpost's record lifecycle statuses (server/db/schema.ts RECORD_STATUSES).
-// The sync only ever wants records not yet written to disk, so it fetches
-// `pending` and, once a record is written, PATCHes it to `synced`.
-const PENDING_STATUS = 'pending';
-const SYNCED_STATUS = 'synced';
 
 // Always scope the fetch to pending records. markpost's GET /api/records
 // supports `filter[status]` (server/api/records/index.get.ts); without it the
@@ -241,23 +241,26 @@ export const markRecordSynced = async (
   syncedAt: string = new Date().toISOString(),
 ): Promise<boolean> => {
   try {
-    const response = await fetch(`${getBaseUrl()}/api/records/${uuid}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/vnd.api+json',
-        Authorization: `Bearer ${getApiToken()}`,
-      },
-      body: JSON.stringify({
-        data: {
-          type: 'records',
-          attributes: {
-            status: SYNCED_STATUS,
-            syncedAt,
-            filePath,
-          },
+    const response = await fetch(
+      `${getBaseUrl()}/api/records/${encodeURIComponent(uuid)}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          Authorization: `Bearer ${getApiToken()}`,
         },
-      }),
-    });
+        body: JSON.stringify({
+          data: {
+            type: 'records',
+            attributes: {
+              status: SYNCED_STATUS,
+              syncedAt,
+              filePath,
+            },
+          },
+        }),
+      },
+    );
 
     // A successful PATCH can legitimately return an empty body, which would
     // make `response.json()` throw; fall back to `{}` so only real HTTP/error

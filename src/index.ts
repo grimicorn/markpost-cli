@@ -117,14 +117,26 @@ async function markRecordsInBatches(
 
 // Surfaces mark-synced failures loudly (never as success): an unmarked record
 // stays pending and gets re-written as a duplicate next run, so the user needs
-// to know which files are affected.
-function reportMarkFailures(failures: WrittenRecord[], spinner: Spinner): void {
+// to know which files are affected. Still reports how many succeeded so a
+// single failure in a large batch doesn't hide that the rest went through.
+function reportMarkFailures(
+  failures: WrittenRecord[],
+  markedCount: number,
+  spinner: Spinner,
+): void {
   spinner.error(
     `Failed to mark ${failures.length} record(s) synced — written locally but still pending on the server; they may be re-written next run.`,
   );
   failures.forEach(({ record, filePath }) => {
     console.log(chalk.dim(`  ! ${record.uuid} -> ${filePath}`));
   });
+
+  if (markedCount > 0) {
+    console.log(
+      chalk.dim(`  Marked ${markedCount} record(s) synced despite the above.`),
+    );
+  }
+
   process.exitCode = 1;
 }
 
@@ -145,11 +157,15 @@ async function markWrittenRecordsSynced(
   const failures = writtenRecords.filter((_written, index) => !results[index]);
 
   if (failures.length > 0) {
-    reportMarkFailures(failures, spinner);
+    reportMarkFailures(
+      failures,
+      writtenRecords.length - failures.length,
+      spinner,
+    );
     return;
   }
 
-  spinner.success(`Marked ${results.length} records synced!`);
+  spinner.success(`Marked ${writtenRecords.length} records synced!`);
 }
 
 // Default behavior when no subcommand is given: read the user's markpost
@@ -217,13 +233,26 @@ async function runDefaultSync(): Promise<void> {
       );
     }
 
-    // autoDelete off: mark the written records synced so the next run's
-    // pending-only fetch skips them instead of re-writing duplicate files.
-    // This runs even when settings couldn't be read (autoDelete defaults off
-    // there): marking synced is a reversible status flip on content already
-    // safely on disk, unlike the irreversible delete below — so the caution
-    // that gates delete on a known autoDelete doesn't apply, and skipping it
-    // would re-introduce the very duplicate-file bug this fixes.
+    // Settings unreadable: autoDelete is forced off above and we don't know
+    // the user's real preference, so mutate nothing on the server. Marking
+    // synced here would be permanent and unrecoverable — a user whose real
+    // setting is autoDelete on would have these records flipped to `synced`,
+    // and the next pending-only fetch would never see them again, so the
+    // deferred delete the warning above promises could never happen. The
+    // duplicate-file risk of skipping is transient (one run, under the
+    // non-destructive suffix default) and already surfaced by that warning.
+    if (!settingsResult.ok) {
+      console.log(
+        chalk.dim(
+          '  Settings unreadable — records left pending on the server.',
+        ),
+      );
+      return;
+    }
+
+    // autoDelete off (settings known): mark the written records synced so the
+    // next run's pending-only fetch skips them instead of re-writing duplicate
+    // files.
     if (!autoDelete) {
       await markWrittenRecordsSynced(writtenRecords, spinner);
       return;

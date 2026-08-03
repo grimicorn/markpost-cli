@@ -269,7 +269,7 @@ describe('index', () => {
     },
   });
 
-  it('writes and marks records synced (never deletes) when settings cannot be read', async () => {
+  it('writes but mutates nothing on the server (no delete, no mark) when settings cannot be read', async () => {
     const { fetchAllRecords, deleteRecords, markRecordSynced } = await import(
       '@/libs/records.js'
     );
@@ -281,7 +281,6 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue({ ok: false });
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
-    vi.mocked(markRecordSynced).mockResolvedValue(true);
 
     await import('@/index.js');
 
@@ -290,16 +289,19 @@ describe('index', () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Could not read settings'),
     );
-    // Delete stays gated on a known autoDelete (never deletes on an unknown
-    // state), but marking synced is a safe reversible flip that must still run
-    // so records aren't re-written as duplicates on the next successful run.
+    // With an unknown autoDelete preference the run must not mutate the server
+    // at all: marking synced would be permanent and could strand records a
+    // user with autoDelete on wanted deleted. They stay pending for a later
+    // run instead.
     expect(mockSpinner.start).not.toHaveBeenCalledWith('Deleting records...');
     expect(deleteRecords).not.toHaveBeenCalled();
-    expect(markRecordSynced).toHaveBeenCalledWith(
-      'abc-123',
-      '/mock/output/test-title.md',
+    expect(mockSpinner.start).not.toHaveBeenCalledWith(
+      'Marking records synced...',
     );
-    expect(mockSpinner.success).toHaveBeenCalledWith('Marked 1 records synced!');
+    expect(markRecordSynced).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Settings unreadable'),
+    );
   });
 
   it("passes the user's conflict strategy from settings to writeMarkdown", async () => {
@@ -519,6 +521,49 @@ describe('index', () => {
     );
     expect(console.log).not.toHaveBeenCalledWith(
       expect.stringContaining('! abc-123'),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('marks records across multiple concurrency batches and pinpoints a failure in a later batch', async () => {
+    const records: Record[] = Array.from({ length: 11 }, (_item, index) => ({
+      uuid: `uuid-${index}`,
+      title: `Title ${index}`,
+      content: `Content ${index}`,
+      createdAt: '2024-01-01T00:00:00Z',
+    }));
+    const { fetchAllRecords, markRecordSynced } = await import(
+      '@/libs/records.js'
+    );
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoDelete: false }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue(records);
+    vi.mocked(writeMarkdown).mockImplementation(
+      (record: Record) => `/mock/output/${record.uuid}.md`,
+    );
+    // Only the 11th record (in the second batch, since concurrency is 10)
+    // fails, exercising the slice/order arithmetic across batches.
+    vi.mocked(markRecordSynced).mockImplementation((uuid: string) =>
+      Promise.resolve(uuid !== 'uuid-10'),
+    );
+
+    await import('@/index.js');
+
+    expect(markRecordSynced).toHaveBeenCalledTimes(11);
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to mark 1 record(s) synced'),
+    );
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('! uuid-10 -> /mock/output/uuid-10.md'),
+    );
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Marked 10 record(s) synced despite'),
     );
     expect(process.exitCode).toBe(1);
   });
