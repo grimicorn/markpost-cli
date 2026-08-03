@@ -50,8 +50,28 @@ const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
   ['get', runGetCommand],
   ['sources', runSourcesCommand],
   ['records', runRecordsCommand],
-  [SYNC_COMMAND, () => runDefaultSync()],
+  [SYNC_COMMAND, runSyncCommand],
 ]);
+
+// The sync is the one destructive command, so it validates its own arguments
+// rather than ignoring them: `markpost sync --help` prints usage, and an
+// unrecognized argument (a typo, a stray flag) errors out instead of silently
+// fetching, writing, and deleting server records.
+async function runSyncCommand(args: string[]): Promise<void> {
+  if (args.some((arg) => HELP_FLAGS.has(arg))) {
+    console.log(SYNC_USAGE);
+    return;
+  }
+
+  if (args.length > 0) {
+    console.error(chalk.redBright(`Unexpected arguments: ${args.join(' ')}`));
+    console.error(SYNC_USAGE);
+    process.exitCode = 1;
+    return;
+  }
+
+  await runDefaultSync();
+}
 
 // Aggregate each subcommand's own USAGE string rather than maintaining a
 // second, hand-written help blob that would drift as commands change — each
@@ -77,16 +97,23 @@ const HELP_TEXT = [
 ].join('\n');
 
 async function dispatch(): Promise<void> {
-  // A bare `markpost` with no subcommand prints help instead of silently
-  // running the destructive sync — an accidental invocation must never delete
-  // server records. Run `markpost sync` to sync on purpose.
-  if (command === undefined) {
+  // An explicit help request is a success: print to stdout and exit 0.
+  if (HELP_FLAGS.has(command)) {
     console.log(HELP_TEXT);
     return;
   }
 
-  if (HELP_FLAGS.has(command)) {
-    console.log(HELP_TEXT);
+  // A bare `markpost` with no subcommand prints help but fails loud (stderr +
+  // non-zero exit): it never runs the destructive sync, and because bare
+  // `markpost` used to be the sync trigger, a silent exit 0 would let a cron
+  // job or wrapper "succeed" while quietly syncing nothing. Run `markpost
+  // sync` to sync on purpose.
+  if (command === undefined) {
+    console.error(HELP_TEXT);
+    console.error(
+      chalk.redBright('No command given. Run `markpost sync` to sync records.'),
+    );
+    process.exitCode = 1;
     return;
   }
 

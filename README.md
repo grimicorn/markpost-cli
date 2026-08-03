@@ -12,9 +12,10 @@ Once installed, run the CLI with the `markpost` command.
 
 ## Usage
 
-Run `markpost help` (or `markpost --help`) to see aggregated usage for every
-command. A bare `markpost` with no arguments prints that help — it does **not**
-sync, so an accidental invocation can't delete server-side records.
+Run `markpost help` (or `markpost --help` / `-h`) to see aggregated usage for
+every command. A bare `markpost` with no arguments prints that help and exits
+non-zero — it does **not** sync, so an accidental invocation can't delete
+server-side records.
 
 | Command | Description |
 |---|---|

@@ -204,7 +204,7 @@ describe('index', () => {
     },
   );
 
-  it('prints help and never runs the destructive sync when invoked with no arguments', async () => {
+  it('prints help, fails loud, and never runs the destructive sync when invoked with no arguments', async () => {
     process.argv = ['node', 'index.js'];
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
@@ -212,16 +212,59 @@ describe('index', () => {
 
     await import('@/index.js');
 
-    expect(console.log).toHaveBeenCalledWith(
+    // A bare invocation is a missing-command error: help goes to stderr and
+    // the exit code is non-zero so a cron job or wrapper can't "succeed"
+    // while silently syncing nothing.
+    expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('Usage: markpost <command>'),
     );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('No command given'),
+    );
+    expect(process.exitCode).toBe(1);
     // The whole point of the fix: a bare invocation must not fetch, write, or
     // delete anything.
     expect(fetchAllRecords).not.toHaveBeenCalled();
     expect(writeMarkdown).not.toHaveBeenCalled();
     expect(deleteRecords).not.toHaveBeenCalled();
     expect(yoctoSpinner).not.toHaveBeenCalled();
-    expect(process.exitCode).toBeUndefined();
+  });
+
+  it.each(['--help', '-h'])(
+    'prints sync usage instead of syncing for "sync %s"',
+    async (helpFlag) => {
+      process.argv = ['node', 'index.js', 'sync', helpFlag];
+      const { fetchAllRecords, deleteRecords } = await import(
+        '@/libs/records.js'
+      );
+      const { default: yoctoSpinner } = await import('yocto-spinner');
+
+      await import('@/index.js');
+
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: markpost sync'),
+      );
+      expect(fetchAllRecords).not.toHaveBeenCalled();
+      expect(deleteRecords).not.toHaveBeenCalled();
+      expect(yoctoSpinner).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
+    },
+  );
+
+  it('errors and skips the sync when the sync command is given unexpected arguments', async () => {
+    process.argv = ['node', 'index.js', 'sync', 'oops'];
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    await import('@/index.js');
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Unexpected arguments: oops'),
+    );
+    expect(process.exitCode).toBe(1);
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(yoctoSpinner).not.toHaveBeenCalled();
   });
 
   it('runs the sync only under the explicit "sync" command', async () => {
