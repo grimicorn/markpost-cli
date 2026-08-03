@@ -8,6 +8,13 @@ vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
 vi.mock('@/libs/settings.js', () => ({ fetchSettings: vi.fn() }));
+// Run the sync once synchronously instead of arming a real timer: the
+// scheduling decision itself is covered in tests/libs/scheduler.test.ts.
+vi.mock('@/libs/scheduler.js', () => ({
+  runSyncWithAutoSchedule: vi.fn(async (runSync: () => Promise<boolean>) => {
+    await runSync();
+  }),
+}));
 vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
 vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
 vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
@@ -171,7 +178,7 @@ describe('index', () => {
 
     expect(mockSpinner.start).toHaveBeenCalledWith('Fetching records...');
     expect(fetchAllRecords).toHaveBeenCalled();
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set), true);
     expect(mockSpinner.success).toHaveBeenCalledWith('Fetched 1 records!');
     expect(mockSpinner.start).toHaveBeenCalledWith('Writing records...');
     expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
@@ -200,8 +207,8 @@ describe('index', () => {
     await import('@/index.js');
 
     expect(writeMarkdown).toHaveBeenCalledTimes(2);
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord2, 'suffix', expect.any(Set));
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set), true);
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord2, 'suffix', expect.any(Set), true);
     // The whole reason seenSlugs is threaded is that every record in a batch
     // shares one Set — assert the exact same instance reaches both calls, so
     // a regression to a per-record Set (which would disable the overwrite
@@ -278,7 +285,7 @@ describe('index', () => {
 
     await import('@/index.js');
 
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set), true);
     expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Could not read settings'),
@@ -303,7 +310,7 @@ describe('index', () => {
 
     await import('@/index.js');
 
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'overwrite', expect.any(Set));
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'overwrite', expect.any(Set), true);
   });
 
   it('normalizes an unknown conflict strategy from settings to suffix', async () => {
@@ -322,7 +329,46 @@ describe('index', () => {
 
     await import('@/index.js');
 
-    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set));
+    expect(writeMarkdown).toHaveBeenCalledWith(mockRecord, 'suffix', expect.any(Set), true);
+  });
+
+  it('passes includeFrontmatter=false to writeMarkdown when the frontmatter setting is off', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ frontmatter: false }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(writeMarkdown).toHaveBeenCalledWith(
+      mockRecord,
+      'suffix',
+      expect.any(Set),
+      false,
+    );
+  });
+
+  it('drives the default sync through the auto-sync scheduler', async () => {
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { runSyncWithAutoSchedule } = await import('@/libs/scheduler.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([]);
+
+    await import('@/index.js');
+
+    expect(runSyncWithAutoSchedule).toHaveBeenCalledWith(expect.any(Function));
   });
 
   it('does not delete records when autoDelete is false', async () => {

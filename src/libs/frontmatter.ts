@@ -125,9 +125,15 @@ const normalizeFrontmatter = (record: Record): Frontmatter | null => {
 // Builds the full .md file contents for a record: a frontmatter block, title
 // heading, and body when the record carries markpost-assembled metadata;
 // otherwise the bare content (records with no frontmatter, e.g. `markpost
-// push` created).
-export const buildRecordDocument = (record: Record): string => {
-  const frontmatter = normalizeFrontmatter(record);
+// push` created). `includeFrontmatter` is the user's `frontmatter` setting —
+// when off, the record takes the same bare-content path as a record that has
+// no frontmatter at all (the heading is only ever emitted alongside a
+// frontmatter block), so "frontmatter disabled" writes just the body.
+export const buildRecordDocument = (
+  record: Record,
+  includeFrontmatter = true,
+): string => {
+  const frontmatter = includeFrontmatter ? normalizeFrontmatter(record) : null;
 
   if (!frontmatter) {
     return record.content;

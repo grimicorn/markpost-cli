@@ -11,11 +11,14 @@ import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
 import { checkConfig } from '@/libs/config.js';
+import { runSyncWithAutoSchedule } from '@/libs/scheduler.js';
 import { Record } from '@/types/records.types.js';
 import {
   ConflictStrategy,
   normalizeAutoDelete,
+  normalizeAutoSync,
   normalizeConflictStrategy,
+  normalizeFrontmatterEnabled,
 } from '@/types/settings.types.js';
 
 const [command, ...commandArgs] = process.argv.slice(2);
@@ -46,9 +49,10 @@ if (command && !commandHandler) {
 
 // Only run the default fetch/write/delete sync when no subcommand was
 // given at all; an unrecognized subcommand must error out above instead
-// of silently falling through to a sync that deletes server records.
+// of silently falling through to a sync that deletes server records. The
+// scheduler self-repeats the sync when the run reports `autoSync` on.
 if (!command) {
-  await runDefaultSync();
+  await runSyncWithAutoSchedule(runDefaultSync);
 }
 
 type WrittenRecord = { record: Record; filePath: string };
@@ -61,6 +65,7 @@ type WrittenRecord = { record: Record; filePath: string };
 function writeRecords(
   records: Record[],
   conflictStrategy: ConflictStrategy,
+  includeFrontmatter: boolean,
 ): WrittenRecord[] {
   // One Set shared across the whole batch so `overwrite` can detect two
   // same-slug records in a single sync and avoid clobbering (see
@@ -71,7 +76,12 @@ function writeRecords(
   return records
     .map((record) => ({
       record,
-      filePath: writeMarkdown(record, conflictStrategy, seenSlugs),
+      filePath: writeMarkdown(
+        record,
+        conflictStrategy,
+        seenSlugs,
+        includeFrontmatter,
+      ),
     }))
     .filter((written): written is WrittenRecord => written.filePath !== null);
 }
@@ -79,8 +89,9 @@ function writeRecords(
 // Default behavior when no subcommand is given: read the user's markpost
 // settings, fetch all records, write each to a markdown file honoring the
 // conflict strategy, then (only if autoDelete is on) delete the records that
-// were actually written from the server.
-async function runDefaultSync(): Promise<void> {
+// were actually written from the server. Returns whether `autoSync` is on so
+// the scheduler can decide to repeat the sync (see runSyncWithAutoSchedule).
+async function runDefaultSync(): Promise<boolean> {
   const spinner = yoctoSpinner({ spinner: cliSpinners.dots });
 
   try {
@@ -101,6 +112,16 @@ async function runDefaultSync(): Promise<void> {
     const autoDelete = settingsResult.ok
       ? normalizeAutoDelete(settings?.autoDelete)
       : false;
+    // A failed settings read leaves autoSync off: without confirmed settings
+    // we don't spin up a self-scheduling daemon (mirrors the conservative
+    // autoDelete above). Frontmatter defaults to on — the safe,
+    // non-destructive default, matching how conflictStrategy falls back.
+    const autoSync = settingsResult.ok
+      ? normalizeAutoSync(settings?.autoSync)
+      : false;
+    const includeFrontmatter = settingsResult.ok
+      ? normalizeFrontmatterEnabled(settings?.frontmatter)
+      : true;
 
     if (!settingsResult.ok) {
       console.log(
@@ -116,14 +137,18 @@ async function runDefaultSync(): Promise<void> {
 
     if (allRecords.length === 0) {
       spinner.success('No new records, exiting...');
-      return;
+      return autoSync;
     }
 
     spinner.success(`Fetched ${allRecords.length} records!`);
 
     // Write Records
     spinner.start('Writing records...');
-    const writtenRecords = writeRecords(allRecords, conflictStrategy);
+    const writtenRecords = writeRecords(
+      allRecords,
+      conflictStrategy,
+      includeFrontmatter,
+    );
     spinner.success(`Wrote ${writtenRecords.length} records!`);
     writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
@@ -148,11 +173,11 @@ async function runDefaultSync(): Promise<void> {
       console.log(
         chalk.dim('  autoDelete is off — records left on the server.'),
       );
-      return;
+      return autoSync;
     }
 
     if (writtenRecords.length === 0) {
-      return;
+      return autoSync;
     }
 
     spinner.start('Deleting records...');
@@ -168,13 +193,17 @@ async function runDefaultSync(): Promise<void> {
         'Failed to delete records from the server — they were written locally but remain on the server.',
       );
       process.exitCode = 1;
-      return;
+      return autoSync;
     }
 
     spinner.success(`Deleted ${deleteMeta.deleted} records!`);
+    return autoSync;
   } catch (error) {
     spinner.error('Something went wrong!');
     console.error(chalk.redBright(error));
     process.exitCode = 1;
+    // Don't self-schedule after an unexpected failure — a crashing run
+    // shouldn't spin a daemon that just keeps crashing.
+    return false;
   }
 }

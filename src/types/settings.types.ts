@@ -14,6 +14,8 @@ export type ConflictStrategy = (typeof CONFLICT_STRATEGIES)[number];
 // failure behaves exactly like an untouched account rather than guessing.
 export const DEFAULT_CONFLICT_STRATEGY: ConflictStrategy = 'suffix';
 export const DEFAULT_AUTO_DELETE = true;
+export const DEFAULT_AUTO_SYNC = true;
+export const DEFAULT_FRONTMATTER_ENABLED = true;
 
 // The attributes markpost's `userSettingsSerializer` returns. `updatedAt` is
 // a `Date` server-side but arrives as an ISO string over the wire, matching
@@ -24,9 +26,8 @@ export type UserSettings = {
   userId: string;
   vaultDir: string;
   filenameTemplate: string;
-  // @todo autoSync/frontmatter are part of markpost's contract but the CLI
-  // doesn't act on them yet — the default sync doesn't self-schedule and
-  // buildRecordDocument always writes frontmatter. Honor them in a follow-up.
+  // When true, the default sync self-schedules a repeat run (see
+  // runSyncWithAutoSchedule); when false the CLI syncs once and exits.
   autoSync: boolean;
   autoDelete: boolean;
   frontmatter: boolean;
@@ -74,4 +75,27 @@ export const normalizeAutoDelete = (value: unknown): boolean => {
   }
 
   return DEFAULT_AUTO_DELETE;
+};
+
+// `autoSync` decides whether the CLI self-schedules another sync, so an
+// off-contract wire value (e.g. the string "false", which is truthy) must not
+// slip through as truthy. Only an actual boolean is trusted; anything else
+// falls back to the documented default.
+export const normalizeAutoSync = (value: unknown): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  return DEFAULT_AUTO_SYNC;
+};
+
+// `frontmatter` gates whether synced files carry a YAML frontmatter block.
+// As with the other flags, only a real boolean is trusted so an off-contract
+// wire value can't flip the behavior; anything else falls back to the default.
+export const normalizeFrontmatterEnabled = (value: unknown): boolean => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  return DEFAULT_FRONTMATTER_ENABLED;
 };
