@@ -99,12 +99,28 @@ export const fetchAllRecords = async (): Promise<Record[]> => {
   return records.flat(1) as Record[];
 };
 
+// markpost's record lifecycle statuses (server/db/schema.ts RECORD_STATUSES).
+// The sync only ever wants records not yet written to disk, so it fetches
+// `pending` and, once a record is written, PATCHes it to `synced`.
+const PENDING_STATUS = 'pending';
+const SYNCED_STATUS = 'synced';
+
+// Always scope the fetch to pending records. markpost's GET /api/records
+// supports `filter[status]` (server/api/records/index.get.ts); without it the
+// server returns synced + pending + error every run, so records already
+// written to disk get re-fetched and re-written as endless `-2`/`-3`
+// duplicates under the suffix strategy. Filtering to pending is what lets the
+// mark-synced step (below) actually close the loop.
 const buildRecordsQuery = (size: number, after?: string): string => {
-  if (!after) {
-    return `page[size]=${size}`;
+  const params = [`page[size]=${size}`];
+
+  if (after) {
+    params.push(`page[after]=${encodeURIComponent(after)}`);
   }
 
-  return `page[size]=${size}&page[after]=${encodeURIComponent(after)}`;
+  params.push(`filter[status]=${PENDING_STATUS}`);
+
+  return params.join('&');
 };
 
 export const fetchPaginatedRecords = async (
@@ -199,6 +215,52 @@ export const createRecord = async (
   } catch (error) {
     logErrorMessage(
       `createRecord["${title}"]`,
+      error instanceof Error ? error.message : String(error),
+    );
+
+    return null;
+  }
+};
+
+// Marks a single record synced after the CLI has written it to disk, via
+// markpost's PATCH /api/records/[uuid] (server/api/records/[uuid].patch.ts),
+// which accepts `status`, `syncedAt`, and `filePath`. This is the
+// non-destructive counterpart to `deleteRecords`: with autoDelete off, moving
+// the record out of `pending` is what stops the next run's pending-only fetch
+// from re-writing it. `syncedAt` is injected (defaulting to now) so callers
+// and tests can pin the timestamp. Content-Type mirrors createRecord/
+// deleteRecords for consistency; markpost reads the body regardless.
+export const markRecordSynced = async (
+  uuid: string,
+  filePath: string,
+  syncedAt: string = new Date().toISOString(),
+): Promise<Record | null> => {
+  try {
+    const response = await fetch(`${getBaseUrl()}/api/records/${uuid}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/vnd.api+json',
+        Authorization: `Bearer ${getApiToken()}`,
+      },
+      body: JSON.stringify({
+        data: {
+          type: 'records',
+          attributes: {
+            status: SYNCED_STATUS,
+            syncedAt,
+            filePath,
+          },
+        },
+      }),
+    });
+
+    const body = (await response.json()) as RecordApiResponse;
+    assertApiSuccess(response, body);
+
+    return unwrapResourceAttributes(body);
+  } catch (error) {
+    logErrorMessage(
+      `markRecordSynced["${uuid}"]`,
       error instanceof Error ? error.message : String(error),
     );
 

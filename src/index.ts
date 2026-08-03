@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 
-import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
+import {
+  deleteRecords,
+  fetchAllRecords,
+  markRecordSynced,
+} from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
 import { fetchSettings } from '@/libs/settings.js';
 import { runPushCommand } from '@/commands/push.js';
@@ -17,6 +21,8 @@ import {
   normalizeAutoDelete,
   normalizeConflictStrategy,
 } from '@/types/settings.types.js';
+
+type Spinner = ReturnType<typeof yoctoSpinner>;
 
 const [command, ...commandArgs] = process.argv.slice(2);
 
@@ -74,6 +80,36 @@ function writeRecords(
       filePath: writeMarkdown(record, conflictStrategy, seenSlugs),
     }))
     .filter((written): written is WrittenRecord => written.filePath !== null);
+}
+
+// Marks every written record synced on the server after a write, so the next
+// run's pending-only fetch skips them — the autoDelete-off path's
+// non-destructive equivalent of the delete step. Failures are surfaced loudly
+// rather than reported as success: an unmarked record stays pending and gets
+// re-written as a duplicate next run, so the user needs to know.
+async function markWrittenRecordsSynced(
+  writtenRecords: WrittenRecord[],
+  spinner: Spinner,
+): Promise<void> {
+  spinner.start('Marking records synced...');
+
+  const results = await Promise.all(
+    writtenRecords.map(({ record, filePath }) =>
+      markRecordSynced(record.uuid, filePath),
+    ),
+  );
+
+  const failedCount = results.filter((result) => !result).length;
+
+  if (failedCount > 0) {
+    spinner.error(
+      `Failed to mark ${failedCount} record(s) synced — written locally but still pending on the server; they may be re-written next run.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  spinner.success(`Marked ${results.length} records synced!`);
 }
 
 // Default behavior when no subcommand is given: read the user's markpost
@@ -141,16 +177,32 @@ async function runDefaultSync(): Promise<void> {
       );
     }
 
-    // Delete Records — skipped entirely when the user has autoDelete off, or
-    // when nothing was written (a bare DELETE with an empty uuid list would
-    // be a wasted, possibly-rejected request reported as success).
-    if (!autoDelete) {
+    // autoDelete off + settings unreadable: we don't know the real autoDelete
+    // preference, so mutate nothing on the server (see the warning above). The
+    // records stay pending and are retried once settings are reachable — the
+    // same conservative stance the delete step takes for an unknown state.
+    if (!autoDelete && !settingsResult.ok) {
       console.log(
         chalk.dim('  autoDelete is off — records left on the server.'),
       );
       return;
     }
 
+    // autoDelete off + settings read: mark the written records synced so the
+    // next run's pending-only fetch skips them instead of re-writing duplicate
+    // files. Nothing written means nothing to mark.
+    if (!autoDelete && writtenRecords.length === 0) {
+      return;
+    }
+
+    if (!autoDelete) {
+      await markWrittenRecordsSynced(writtenRecords, spinner);
+      return;
+    }
+
+    // Delete Records — skipped when nothing was written (a bare DELETE with an
+    // empty uuid list would be a wasted, possibly-rejected request reported as
+    // success).
     if (writtenRecords.length === 0) {
       return;
     }

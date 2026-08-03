@@ -6,6 +6,7 @@ import {
   fetchAllRecords,
   fetchPaginatedRecords,
   fetchRecord,
+  markRecordSynced,
 } from '@/libs/records.js';
 import { ApiDeleteMeta } from '@/types/api.types.js';
 import { Record } from '@/types/records.types.js';
@@ -102,7 +103,7 @@ describe('fetchAllRecords', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      'https://example.com/api/records?page[size]=100&page[after]=abc-123',
+      'https://example.com/api/records?page[size]=100&page[after]=abc-123&filter[status]=pending',
       expect.objectContaining({
         headers: { Authorization: 'Bearer test-token' },
       }),
@@ -288,7 +289,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      'https://example.com/api/records?page[size]=100&page[after]=abc%2Bxyz',
+      'https://example.com/api/records?page[size]=100&page[after]=abc%2Bxyz&filter[status]=pending',
       expect.objectContaining({
         headers: { Authorization: 'Bearer test-token' },
       }),
@@ -325,7 +326,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      'https://example.com/api/records?page[size]=100&page[after]=abc-123',
+      'https://example.com/api/records?page[size]=100&page[after]=abc-123&filter[status]=pending',
       expect.objectContaining({
         headers: { Authorization: 'Bearer test-token' },
       }),
@@ -381,7 +382,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      'https://example.com/api/records?page[size]=100&page[after]=YWJj%3D%3D',
+      'https://example.com/api/records?page[size]=100&page[after]=YWJj%3D%3D&filter[status]=pending',
       expect.objectContaining({
         headers: { Authorization: 'Bearer test-token' },
       }),
@@ -400,18 +401,28 @@ describe('fetchPaginatedRecords', () => {
     mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
     await fetchPaginatedRecords();
     expect(global.fetch).toHaveBeenCalledWith(
-      'https://example.com/api/records?page[size]=100',
+      'https://example.com/api/records?page[size]=100&filter[status]=pending',
       expect.objectContaining({
         headers: { Authorization: 'Bearer test-token' },
       }),
     );
   });
 
+  // Regression coverage for #50: without filter[status]=pending the server
+  // returns synced records too, so already-written records are re-fetched and
+  // re-written as `-2`/`-3` duplicates every run.
+  it('scopes the fetch to pending records via filter[status]', async () => {
+    mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
+    await fetchPaginatedRecords();
+    const requestedUrl = vi.mocked(global.fetch).mock.calls[0]?.[0];
+    expect(requestedUrl).toContain('filter[status]=pending');
+  });
+
   it('calls fetch with the cursor and page[size] and auth header', async () => {
     mockFetch({ data: [mockRecord], meta: mockPaginatedMeta });
     await fetchPaginatedRecords('abc-123', 50);
     expect(global.fetch).toHaveBeenCalledWith(
-      'https://example.com/api/records?page[size]=50&page[after]=abc-123',
+      'https://example.com/api/records?page[size]=50&page[after]=abc-123&filter[status]=pending',
       expect.objectContaining({
         headers: { Authorization: 'Bearer test-token' },
       }),
@@ -701,5 +712,75 @@ describe('deleteRecords', () => {
   it('returns null on network failure', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
     expect(await deleteRecords(['abc-123'])).toBeNull();
+  });
+});
+
+describe('markRecordSynced', () => {
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('PATCHes the record uuid with status=synced, syncedAt, and filePath', async () => {
+    mockFetch({ data: { attributes: mockRecord } });
+    await markRecordSynced(
+      'abc-123',
+      '/vault/test-title.md',
+      '2024-01-01T00:00:00.000Z',
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://example.com/api/records/abc-123',
+      expect.objectContaining({
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          Authorization: 'Bearer test-token',
+        },
+        body: JSON.stringify({
+          data: {
+            type: 'records',
+            attributes: {
+              status: 'synced',
+              syncedAt: '2024-01-01T00:00:00.000Z',
+              filePath: '/vault/test-title.md',
+            },
+          },
+        }),
+      }),
+    );
+  });
+
+  it('defaults syncedAt to the current time when not supplied', async () => {
+    mockFetch({ data: { attributes: mockRecord } });
+    await markRecordSynced('abc-123', '/vault/test-title.md');
+    const requestInit = vi.mocked(global.fetch).mock.calls[0]?.[1];
+    const sentBody = JSON.parse(String(requestInit?.body));
+    expect(sentBody.data.attributes.syncedAt).toEqual(expect.any(String));
+    expect(
+      Number.isNaN(Date.parse(sentBody.data.attributes.syncedAt)),
+    ).toBe(false);
+  });
+
+  it('returns the updated record attributes on success', async () => {
+    mockFetch({ data: { attributes: mockRecord } });
+    expect(
+      await markRecordSynced('abc-123', '/vault/test-title.md'),
+    ).toEqual(mockRecord);
+  });
+
+  it('returns null when the response contains errors', async () => {
+    mockFetch(
+      { data: { errors: [{ title: 'Not Found', detail: 'Record missing' }] } },
+      false,
+    );
+    expect(
+      await markRecordSynced('abc-123', '/vault/test-title.md'),
+    ).toBeNull();
+  });
+
+  it('returns null on network failure', async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
+    expect(
+      await markRecordSynced('abc-123', '/vault/test-title.md'),
+    ).toBeNull();
   });
 });
