@@ -3,10 +3,16 @@
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
 import { fetchSettings } from '@/libs/settings.js';
-import { runPushCommand } from '@/commands/push.js';
-import { runGetCommand } from '@/commands/get.js';
-import { runSourcesCommand } from '@/commands/sources.js';
-import { runRecordsCommand } from '@/commands/records.js';
+import { runPushCommand, USAGE as PUSH_USAGE } from '@/commands/push.js';
+import { runGetCommand, USAGE as GET_USAGE } from '@/commands/get.js';
+import {
+  runSourcesCommand,
+  USAGE as SOURCES_USAGE,
+} from '@/commands/sources.js';
+import {
+  runRecordsCommand,
+  USAGE as RECORDS_USAGE,
+} from '@/commands/records.js';
 import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
@@ -20,6 +26,19 @@ import {
 
 const [command, ...commandArgs] = process.argv.slice(2);
 
+const SYNC_COMMAND = 'sync';
+
+// The fetch/write/delete sync is destructive (it can delete server records),
+// so it must be requested explicitly by name — never triggered by a bare,
+// accidental `markpost`. Its usage lives here because the sync lives here.
+const SYNC_USAGE = `Usage: markpost sync
+
+  Fetch all pending records, write each to a markdown file, and (when
+  autoDelete is enabled) delete the written records from the server`;
+
+// Aliases that print help instead of dispatching a command.
+const HELP_FLAGS = new Set(['help', '--help', '-h']);
+
 // One source of truth for dispatch: adding a command here is enough, unlike
 // a parallel list of `if (command === 'x')` blocks plus a separately
 // maintained "known commands" array that can drift out of sync.
@@ -31,25 +50,63 @@ const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
   ['get', runGetCommand],
   ['sources', runSourcesCommand],
   ['records', runRecordsCommand],
+  [SYNC_COMMAND, () => runDefaultSync()],
 ]);
 
-const commandHandler = COMMAND_HANDLERS.get(command);
+// Aggregate each subcommand's own USAGE string rather than maintaining a
+// second, hand-written help blob that would drift as commands change — each
+// command owns the single source of truth for its own usage.
+const HELP_TEXT = [
+  'markpost — sync markdown records with your markpost account',
+  '',
+  'Usage: markpost <command> [options]',
+  '',
+  'Commands:',
+  '',
+  SYNC_USAGE,
+  '',
+  PUSH_USAGE,
+  '',
+  GET_USAGE,
+  '',
+  SOURCES_USAGE,
+  '',
+  RECORDS_USAGE,
+  '',
+  'Run `markpost help` (or `--help`) to see this message.',
+].join('\n');
 
-if (commandHandler) {
+async function dispatch(): Promise<void> {
+  // A bare `markpost` with no subcommand prints help instead of silently
+  // running the destructive sync — an accidental invocation must never delete
+  // server records. Run `markpost sync` to sync on purpose.
+  if (command === undefined) {
+    console.log(HELP_TEXT);
+    return;
+  }
+
+  if (HELP_FLAGS.has(command)) {
+    console.log(HELP_TEXT);
+    return;
+  }
+
+  const commandHandler = COMMAND_HANDLERS.get(command);
+
+  // An unrecognized subcommand errors out rather than falling through to the
+  // sync that deletes server records.
+  if (!commandHandler) {
+    console.error(chalk.redBright(`Unknown command: ${command}`));
+    console.error(
+      chalk.dim('Run `markpost help` to see the available commands.'),
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   await commandHandler(commandArgs);
 }
 
-if (command && !commandHandler) {
-  console.error(chalk.redBright(`Unknown command: ${command}`));
-  process.exitCode = 1;
-}
-
-// Only run the default fetch/write/delete sync when no subcommand was
-// given at all; an unrecognized subcommand must error out above instead
-// of silently falling through to a sync that deletes server records.
-if (!command) {
-  await runDefaultSync();
-}
+await dispatch();
 
 type WrittenRecord = { record: Record; filePath: string };
 

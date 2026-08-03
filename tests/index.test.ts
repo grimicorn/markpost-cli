@@ -8,10 +8,22 @@ vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
 vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
 vi.mock('@/libs/settings.js', () => ({ fetchSettings: vi.fn() }));
-vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
-vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
-vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
-vi.mock('@/commands/records.js', () => ({ runRecordsCommand: vi.fn() }));
+vi.mock('@/commands/push.js', () => ({
+  runPushCommand: vi.fn(),
+  USAGE: 'Usage: markpost push <path...>',
+}));
+vi.mock('@/commands/get.js', () => ({
+  runGetCommand: vi.fn(),
+  USAGE: 'Usage: markpost get <uuid>',
+}));
+vi.mock('@/commands/sources.js', () => ({
+  runSourcesCommand: vi.fn(),
+  USAGE: 'Usage: markpost sources <list|create|update|delete> [uuid]',
+}));
+vi.mock('@/commands/records.js', () => ({
+  runRecordsCommand: vi.fn(),
+  USAGE: 'Usage: markpost records <list>',
+}));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
 vi.mock('chalk', () => ({
@@ -37,7 +49,10 @@ describe('index', () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockSpinner = { start: vi.fn(), success: vi.fn(), error: vi.fn() };
-    process.argv = ['node', 'index.js'];
+    // The sync now runs only under the explicit `sync` subcommand, so the
+    // default-sync tests below invoke it that way. Dispatch, help, and
+    // no-arg tests override process.argv themselves.
+    process.argv = ['node', 'index.js', 'sync'];
     process.exitCode = undefined;
     vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -154,6 +169,79 @@ describe('index', () => {
       expect(process.exitCode).toBe(1);
     },
   );
+
+  it.each(['--help', 'help', '-h'])(
+    'prints aggregated usage and exits 0 for "%s" without touching the sync',
+    async (helpFlag) => {
+      process.argv = ['node', 'index.js', helpFlag];
+      const { fetchAllRecords, deleteRecords } = await import(
+        '@/libs/records.js'
+      );
+      const { default: yoctoSpinner } = await import('yocto-spinner');
+
+      await import('@/index.js');
+
+      // Aggregates every subcommand's own USAGE string.
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: markpost sync'),
+      );
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: markpost push'),
+      );
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: markpost get'),
+      );
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: markpost sources'),
+      );
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('Usage: markpost records'),
+      );
+      expect(fetchAllRecords).not.toHaveBeenCalled();
+      expect(deleteRecords).not.toHaveBeenCalled();
+      expect(yoctoSpinner).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
+    },
+  );
+
+  it('prints help and never runs the destructive sync when invoked with no arguments', async () => {
+    process.argv = ['node', 'index.js'];
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    await import('@/index.js');
+
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Usage: markpost <command>'),
+    );
+    // The whole point of the fix: a bare invocation must not fetch, write, or
+    // delete anything.
+    expect(fetchAllRecords).not.toHaveBeenCalled();
+    expect(writeMarkdown).not.toHaveBeenCalled();
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(yoctoSpinner).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('runs the sync only under the explicit "sync" command', async () => {
+    process.argv = ['node', 'index.js', 'sync'];
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(fetchAllRecords).toHaveBeenCalled();
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+  });
 
   it('fetches all records and writes each as markdown', async () => {
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
