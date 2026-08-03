@@ -21,7 +21,10 @@ honoring your markpost account settings:
   at startup. When off, `markpost` syncs once and exits. Records already written
   during a session are not re-written on later iterations; a record edited on
   the server after it was synced is not re-fetched until you restart the process
-  (the record contract carries no mutation timestamp to detect the edit).
+  (the record contract carries no mutation timestamp to detect the edit). Note
+  that with `autoDelete` off each iteration re-fetches your full record set (the
+  API has no incremental cursor), so the per-interval fetch cost grows with your
+  history.
 - **`autoDelete`** — when on (markpost's default), records written locally are
   deleted from the server after a successful write; when off, they stay on the
   server. If a delete fails, the record is retried on the next `autoSync`

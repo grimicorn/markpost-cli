@@ -457,6 +457,56 @@ describe('index', () => {
     await import('@/index.js');
 
     expect(scheduler.lastSyncResult).toBe(false);
+    // With no prior good read, a failed read writes with conservative defaults:
+    // suffix strategy and frontmatter on.
+    expect(writeMarkdown).toHaveBeenCalledWith(
+      mockRecord,
+      'suffix',
+      expect.any(Set),
+      true,
+    );
+  });
+
+  it('reuses the last confirmed format when a later iteration cannot read settings', async () => {
+    const mockRecord2: Record = {
+      uuid: 'def-456',
+      title: 'Second',
+      content: 'Second body',
+      createdAt: '2024-01-02T00:00:00Z',
+    };
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    // Iteration 1 confirms frontmatter off + overwrite strategy.
+    vi.mocked(fetchSettings).mockResolvedValueOnce(
+      mockSettings({
+        autoSync: true,
+        autoDelete: false,
+        frontmatter: false,
+        conflictStrategy: 'overwrite',
+      }),
+    );
+    // Iteration 2's settings read blips.
+    vi.mocked(fetchSettings).mockResolvedValue({ ok: false });
+    vi.mocked(fetchAllRecords).mockResolvedValueOnce([mockRecord]);
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord2]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/x.md');
+
+    await import('@/index.js');
+    await scheduler.runSync?.();
+
+    // The record written during the failed-settings iteration keeps the user's
+    // confirmed format (frontmatter off, overwrite) rather than reverting to
+    // suffix + frontmatter-on defaults.
+    expect(writeMarkdown).toHaveBeenCalledWith(
+      mockRecord2,
+      'overwrite',
+      expect.any(Set),
+      false,
+    );
   });
 
   it('keeps autoSync on across a transient failure so the daemon survives one throw', async () => {

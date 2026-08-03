@@ -2,7 +2,11 @@
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
-import { fetchSettings, resolveSyncSettings } from '@/libs/settings.js';
+import {
+  fetchSettings,
+  resolveSyncSettings,
+  ResolvedSyncSettings,
+} from '@/libs/settings.js';
 import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
 import { runSourcesCommand } from '@/commands/sources.js';
@@ -29,12 +33,12 @@ const AUTO_SYNC_INTERVAL_MINUTES = AUTO_SYNC_INTERVAL_MS / MS_PER_MINUTE;
 // than reprinting the banner on every scheduled iteration.
 let autoSyncAnnounced = false;
 
-// The last autoSync value confirmed from a successful settings read. Once a
-// daemon is established, a transient failure *before* the next read (e.g.
-// checkConfig throwing) shouldn't silently end the loop — it resumes from this.
-// Stays false until the first successful read, so a failure on the very first
-// iteration never starts a loop.
-let lastKnownAutoSync = false;
+// The last settings confirmed from a successful read. On a transient read
+// failure an established daemon reuses these (forcing autoDelete off — the
+// irreversible delete must never run on unconfirmed settings) so records aren't
+// written in the wrong format or the loop silently stopped. Null until the
+// first successful read, so an initial failure stays fully conservative.
+let lastResolvedSettings: ResolvedSyncSettings | null = null;
 
 // UUIDs already written this process. In an autoSync loop with autoDelete off,
 // the same server records reappear every iteration; without this the suffix
@@ -143,22 +147,27 @@ function reportSkipped(skippedCount: number): void {
   );
 }
 
+function reportAutoDeleteOff(writtenCount: number): void {
+  if (writtenCount <= 0) {
+    return;
+  }
+
+  console.log(chalk.dim('  autoDelete is off — records left on the server.'));
+}
+
 // Resolves the server side of a write: with autoDelete off the records are
 // intentionally left on the server; with it on they're deleted. Returns whether
 // the records are settled server-side and therefore safe to mark synced — a
-// failed delete returns false so they're retried next iteration instead of
-// being abandoned (and re-surfaces the error each time until it succeeds).
+// failed or partial delete returns false so they're retried next iteration
+// instead of being abandoned (and re-surfaces the error each time until it
+// succeeds).
 async function finalizeServerRecords(
   writtenRecords: WrittenRecord[],
   autoDelete: boolean,
   spinner: Spinner,
 ): Promise<boolean> {
   if (!autoDelete) {
-    if (writtenRecords.length > 0) {
-      console.log(
-        chalk.dim('  autoDelete is off — records left on the server.'),
-      );
-    }
+    reportAutoDeleteOff(writtenRecords.length);
     return true;
   }
 
@@ -184,6 +193,17 @@ async function finalizeServerRecords(
     return false;
   }
 
+  // A partial delete (fewer removed than requested) must not be reported as a
+  // full success — the survivors would be marked synced and abandoned. Fail
+  // loud and retry them next iteration.
+  if (deleteMeta.deleted < writtenRecords.length) {
+    spinner.error(
+      `Deleted ${deleteMeta.deleted} of ${writtenRecords.length} records — the rest remain on the server and will be retried.`,
+    );
+    process.exitCode = 1;
+    return false;
+  }
+
   spinner.success(`Deleted ${deleteMeta.deleted} records!`);
   return true;
 }
@@ -204,32 +224,37 @@ async function runDefaultSync(): Promise<boolean> {
   // (checkConfig, an unreachable settings endpoint) resumes an already-running
   // daemon rather than silently ending it. Stays false until the first
   // successful read, so a failure on the very first iteration never loops.
-  let autoSync = lastKnownAutoSync;
+  let autoSync = lastResolvedSettings?.autoSync ?? false;
 
   try {
     await checkConfig();
 
     // Read settings up front so both write and delete honor the user's
-    // markpost preferences. A failed read (`ok: false`) still writes (suffix
-    // is the safe non-destructive default) but never auto-deletes — deleting
-    // server records is irreversible, so an unknown state must not fall
-    // through to "delete". A successful read with no saved row (`settings:
-    // null`) is a real account default, so it uses markpost's defaults
-    // silently. resolveSyncSettings owns those fallbacks (see settings.ts).
+    // markpost preferences. A failed read (`ok: false`) reuses the last
+    // confirmed settings when we have them (so records keep the user's real
+    // format) but always forces autoDelete off — deleting server records is
+    // irreversible, so an unconfirmed state must never delete. A successful
+    // read with no saved row (`settings: null`) is a real account default, so
+    // it uses markpost's defaults. resolveSyncSettings owns those fallbacks
+    // (see settings.ts).
     const settingsResult = await fetchSettings();
+    const resolved = resolveSyncSettings(settingsResult);
+
+    if (settingsResult.ok) {
+      lastResolvedSettings = resolved;
+    }
+
+    // On a failed read with a prior good read, reuse it (autoDelete forced off);
+    // otherwise take the resolver's conservative defaults.
     const {
       conflictStrategy,
       autoDelete,
       autoSync: resolvedAutoSync,
       includeFrontmatter,
-    } = resolveSyncSettings(settingsResult);
-
-    // Only a successful read updates the sync mode; a transient read failure
-    // keeps an established daemon on its last confirmed value.
-    if (settingsResult.ok) {
-      autoSync = resolvedAutoSync;
-      lastKnownAutoSync = resolvedAutoSync;
-    }
+    } = settingsResult.ok || !lastResolvedSettings
+      ? resolved
+      : { ...lastResolvedSettings, autoDelete: false };
+    autoSync = resolvedAutoSync;
 
     if (!settingsResult.ok) {
       console.log(
