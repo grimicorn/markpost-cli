@@ -760,9 +760,8 @@ describe('markRecordSynced', () => {
     );
   });
 
-  // A 2xx that carries no resource body (or an empty body markpost may return
-  // on a successful PATCH) must count as success, not a spurious failure that
-  // warns the user of duplicates that never appear.
+  // A 2xx that carries no resource body must count as success, not a spurious
+  // failure that warns the user of duplicates that never appear.
   it('returns true for a 2xx response with a null data body', async () => {
     mockFetch({ data: null });
     expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
@@ -770,13 +769,16 @@ describe('markRecordSynced', () => {
     );
   });
 
-  it('returns true for a 2xx response with an empty body', async () => {
+  // A 200 carrying an unparseable body (e.g. an HTML page from a proxy) must
+  // fail rather than be reported as a silent success that leaves the record
+  // pending and re-duplicated next run.
+  it('returns false for a 2xx response whose body is not valid JSON', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: () => Promise.reject(new Error('Unexpected end of JSON input')),
+      json: () => Promise.reject(new Error('Unexpected token < in JSON')),
     });
     expect(await markRecordSynced('abc-123', '/vault/test-title.md')).toBe(
-      true,
+      false,
     );
   });
 

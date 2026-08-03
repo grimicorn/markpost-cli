@@ -238,13 +238,15 @@ async function runDefaultSync(): Promise<void> {
     // synced here would be permanent and unrecoverable — a user whose real
     // setting is autoDelete on would have these records flipped to `synced`,
     // and the next pending-only fetch would never see them again, so the
-    // deferred delete the warning above promises could never happen. The
-    // duplicate-file risk of skipping is transient (one run, under the
-    // non-destructive suffix default) and already surfaced by that warning.
+    // deferred delete the warning above promises could never happen. Skipping
+    // the mark risks re-writing these records as fresh `-2`/`-3` files on every
+    // run until settings are readable again (bounded by the non-destructive
+    // suffix default), which we warn about explicitly below — the lesser,
+    // recoverable evil versus a permanent strand.
     if (!settingsResult.ok) {
       console.log(
-        chalk.dim(
-          '  Settings unreadable — records left pending on the server.',
+        chalk.yellow(
+          '  Settings unreadable — records left pending; they will be re-written as new files each run until settings are readable.',
         ),
       );
       return;

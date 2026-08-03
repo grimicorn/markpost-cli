@@ -234,7 +234,11 @@ export const createRecord = async (
 // Returns a plain success boolean rather than the updated record: the caller
 // only needs to know whether the server accepted the change. Reading it back
 // as a resource would mis-report a legitimate 2xx that carries no `data`
-// (or an empty body) as a failure, wrongly warning the user of duplicates.
+// (markpost's PATCH always returns the record, but a `data: null` shape still
+// counts as success here) as a failure, wrongly warning the user of
+// duplicates. `filePath` is sent deliberately — markpost stores it on the
+// record so its UI can show where a synced note landed; it's the user's own
+// local path going to their own account, not a third-party leak.
 export const markRecordSynced = async (
   uuid: string,
   filePath: string,
@@ -262,10 +266,11 @@ export const markRecordSynced = async (
       },
     );
 
-    // A successful PATCH can legitimately return an empty body, which would
-    // make `response.json()` throw; fall back to `{}` so only real HTTP/error
-    // responses (caught by assertApiSuccess) count as failures.
-    const body = (await response.json().catch(() => ({}))) as RecordApiResponse;
+    // Parse and assert exactly like the other request helpers: an unparseable
+    // body (e.g. an HTML error page from a proxy behind a 200) throws here and
+    // is caught below as a failure, rather than being mistaken for a silent
+    // success that leaves the record pending.
+    const body = (await response.json()) as RecordApiResponse;
     assertApiSuccess(response, body);
 
     return true;
