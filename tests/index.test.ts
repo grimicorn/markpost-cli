@@ -22,13 +22,17 @@ vi.mock('@/libs/settings.js', async (importOriginal) => {
 // tests/libs/scheduler.test.ts.
 const scheduler = vi.hoisted(() => ({
   lastSyncResult: undefined as boolean | undefined,
+  runSync: undefined as (() => Promise<boolean>) | undefined,
 }));
 vi.mock('@/libs/scheduler.js', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('@/libs/scheduler.js')>();
   return {
     ...actual,
+    // Capture runSync so a test can drive extra iterations by hand (the real
+    // scheduler would re-invoke it on a timer) and run the first iteration now.
     runSyncWithAutoSchedule: vi.fn(async (runSync: () => Promise<boolean>) => {
+      scheduler.runSync = runSync;
       scheduler.lastSyncResult = await runSync();
     }),
   };
@@ -62,6 +66,7 @@ describe('index', () => {
     vi.resetModules();
     vi.clearAllMocks();
     scheduler.lastSyncResult = undefined;
+    scheduler.runSync = undefined;
     mockSpinner = { start: vi.fn(), success: vi.fn(), error: vi.fn() };
     process.argv = ['node', 'index.js'];
     process.exitCode = undefined;
@@ -476,7 +481,9 @@ describe('index', () => {
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
-    vi.mocked(checkConfig).mockRejectedValue(new Error('No config'));
+    // Once-only: clearAllMocks doesn't reset implementations, so a persistent
+    // reject would poison later tests.
+    vi.mocked(checkConfig).mockRejectedValueOnce(new Error('No config'));
 
     await import('@/index.js');
 
@@ -484,10 +491,56 @@ describe('index', () => {
     // never got that far won't start a daemon loop.
     expect(scheduler.lastSyncResult).toBe(false);
     expect(process.exitCode).toBe(1);
+  });
 
-    // clearAllMocks doesn't reset implementations, so restore checkConfig or
-    // it would keep rejecting in later tests.
-    vi.mocked(checkConfig).mockResolvedValue(undefined);
+  it('across iterations: announces once and skips records already synced this process', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoSync: true, autoDelete: false }),
+    );
+    // The same record comes back every iteration (autoDelete off leaves it on
+    // the server).
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+
+    await import('@/index.js');
+    // Drive a second iteration by hand.
+    await scheduler.runSync?.();
+
+    // Written once, not twice — the second iteration filtered the already-synced
+    // record instead of writing a suffixed duplicate.
+    expect(writeMarkdown).toHaveBeenCalledTimes(1);
+    expect(mockSpinner.success).toHaveBeenCalledWith('No new records.');
+    expect(deleteRecords).not.toHaveBeenCalled();
+
+    const bannerCalls = vi
+      .mocked(console.log)
+      .mock.calls.filter((call) => String(call[0]).includes('autoSync is on'));
+    expect(bannerCalls).toHaveLength(1);
+  });
+
+  it('resets exitCode to 0 once a failed iteration recovers', async () => {
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings({ autoSync: true }));
+    vi.mocked(fetchAllRecords)
+      .mockRejectedValueOnce(new Error('Network blip'))
+      .mockResolvedValue([]);
+
+    await import('@/index.js');
+    expect(process.exitCode).toBe(1);
+
+    await scheduler.runSync?.();
+    // The recovered iteration cleared the sticky failure code.
+    expect(process.exitCode).toBe(0);
   });
 
   it('does not delete records when autoDelete is false', async () => {

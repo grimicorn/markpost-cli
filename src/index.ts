@@ -29,6 +29,12 @@ const AUTO_SYNC_INTERVAL_MINUTES = AUTO_SYNC_INTERVAL_MS / MS_PER_MINUTE;
 // than reprinting the banner on every scheduled iteration.
 let autoSyncAnnounced = false;
 
+// UUIDs already written this process. In an autoSync loop with autoDelete off,
+// the same server records reappear every iteration; without this the suffix
+// strategy would write test-title-1.md, test-title-2.md, ... endlessly. Scoped
+// to the process, so a fresh `markpost` invocation starts empty.
+const syncedRecordIds = new Set<string>();
+
 const [command, ...commandArgs] = process.argv.slice(2);
 
 // One source of truth for dispatch: adding a command here is enough, unlike
@@ -161,23 +167,31 @@ async function runDefaultSync(): Promise<boolean> {
     // Fetch records
     spinner.start('Fetching records...');
     const allRecords = await fetchAllRecords();
+    // Drop records already written earlier this process so a self-scheduling
+    // run doesn't re-write them (see syncedRecordIds).
+    const newRecords = allRecords.filter(
+      (record) => !syncedRecordIds.has(record.uuid),
+    );
 
-    if (allRecords.length === 0) {
+    if (newRecords.length === 0) {
       spinner.success(
         autoSync ? 'No new records.' : 'No new records, exiting...',
       );
       return autoSync;
     }
 
-    spinner.success(`Fetched ${allRecords.length} records!`);
+    spinner.success(`Fetched ${newRecords.length} records!`);
 
     // Write Records
     spinner.start('Writing records...');
     const writtenRecords = writeRecords(
-      allRecords,
+      newRecords,
       conflictStrategy,
       includeFrontmatter,
     );
+    // Mark them synced now (on write success): even if the delete below fails,
+    // re-writing them next iteration would only create suffixed duplicates.
+    writtenRecords.forEach(({ record }) => syncedRecordIds.add(record.uuid));
     spinner.success(`Wrote ${writtenRecords.length} records!`);
     writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
@@ -186,7 +200,7 @@ async function runDefaultSync(): Promise<boolean> {
     // Surface records the `skip` strategy left unwritten: they stay on the
     // server (they're excluded from the delete below), so the user needs to
     // know they weren't synced rather than silently losing count of them.
-    const skippedCount = allRecords.length - writtenRecords.length;
+    const skippedCount = newRecords.length - writtenRecords.length;
     if (skippedCount > 0) {
       console.log(
         chalk.yellow(

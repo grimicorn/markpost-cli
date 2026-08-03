@@ -10,6 +10,25 @@ npm install -g @markpost/cli
 
 Once installed, run the CLI with the `markpost` command.
 
+## Sync behavior
+
+Running `markpost` with no subcommand syncs your records to `OUTPUT_DIRECTORY`,
+honoring your markpost account settings:
+
+- **`autoSync`** — when on (markpost's default), the sync does not exit after
+  one pass: it self-schedules and re-runs every 5 minutes, staying in the
+  foreground until you stop it with `Ctrl-C`. A one-line banner announces this
+  at startup. When off, `markpost` syncs once and exits. Records already written
+  during a session are not re-written on later iterations.
+- **`autoDelete`** — when on (markpost's default), records written locally are
+  deleted from the server after a successful write; when off, they stay on the
+  server.
+- **`frontmatter`** — when on (markpost's default), synced files include a YAML
+  frontmatter block; when off, the file is written with just the `# Title`
+  heading and body.
+- **`conflictStrategy`** — how same-name files are handled (`suffix`,
+  `overwrite`, or `skip`).
+
 ## Development
 
 ### Prerequisites
