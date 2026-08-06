@@ -29,6 +29,11 @@ shows only the first and last four characters (e.g. `sk_a****wxyz`), and fully
 masks tokens too short to redact safely. The output directory is a plain path
 and shown in full.
 
+Note that `config set apiToken <token>` puts the token in your shell history.
+Prefer a leading space (with `HISTCONTROL=ignorespace`, or `setopt
+HIST_IGNORE_SPACE` in zsh) to keep it out, or set `API_TOKEN` in the
+environment instead.
+
 ## Development
 
 ### Prerequisites

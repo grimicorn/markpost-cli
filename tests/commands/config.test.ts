@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockGetConfigValue, mockSetConfigValue, mockGetConfigPath } =
   vi.hoisted(() => ({
@@ -7,18 +7,22 @@ const { mockGetConfigValue, mockSetConfigValue, mockGetConfigPath } =
     mockGetConfigPath: vi.fn(),
   }));
 
-vi.mock('@/libs/config.js', () => {
-  const CONFIG_KEYS = ['apiToken', 'outputDirectory'] as const;
+// `conf` instantiates a filesystem-backed store at import time; stub it so
+// loading the real config module in tests never touches disk.
+vi.mock('conf', () => ({
+  default: vi.fn().mockImplementation(function () {
+    return { get: vi.fn(), set: vi.fn(), path: '' };
+  }),
+}));
 
-  return {
-    CONFIG_KEYS,
-    isConfigKey: (value: string) =>
-      (CONFIG_KEYS as readonly string[]).includes(value),
-    getConfigValue: mockGetConfigValue,
-    setConfigValue: mockSetConfigValue,
-    getConfigPath: mockGetConfigPath,
-  };
-});
+// Keep the real CONFIG_KEYS / isConfigKey / formatting so a new key added to
+// the source is exercised here automatically; mock only the I/O seams.
+vi.mock('@/libs/config.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/libs/config.js')>()),
+  getConfigValue: mockGetConfigValue,
+  setConfigValue: mockSetConfigValue,
+  getConfigPath: mockGetConfigPath,
+}));
 
 vi.mock('chalk', () => ({
   default: {
@@ -38,12 +42,21 @@ const importCommand = async () => {
   return runConfigCommand;
 };
 
+const importKeys = async () => {
+  const { CONFIG_KEYS } = await import('@/libs/config.js');
+  return CONFIG_KEYS;
+};
+
 describe('runConfigCommand', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.resetAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
     process.exitCode = undefined;
   });
 
@@ -54,18 +67,19 @@ describe('runConfigCommand', () => {
   };
 
   describe('get', () => {
-    it('prints every key when no key is given', async () => {
+    it('prints every stored key when no key is given', async () => {
       storeAllValues();
+      const keys = await importKeys();
       const runConfigCommand = await importCommand();
 
       await runConfigCommand(['get']);
 
-      expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining('apiToken:'),
-      );
-      expect(console.log).toHaveBeenCalledWith(
-        expect.stringContaining('outputDirectory:'),
-      );
+      expect(console.log).toHaveBeenCalledTimes(keys.length);
+      keys.forEach((key) => {
+        expect(console.log).toHaveBeenCalledWith(
+          expect.stringContaining(`${key}:`),
+        );
+      });
     });
 
     it('masks the token to its edges and never prints it in full', async () => {
@@ -88,6 +102,26 @@ describe('runConfigCommand', () => {
       await runConfigCommand(['get', 'apiToken']);
 
       expect(console.log).toHaveBeenCalledWith('apiToken: ****');
+    });
+
+    it('masks a token exactly one under the reveal threshold', async () => {
+      const elevenCharToken = 'abcdefghijk';
+      mockGetConfigValue.mockReturnValue(elevenCharToken);
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['get', 'apiToken']);
+
+      expect(console.log).toHaveBeenCalledWith('apiToken: ****');
+    });
+
+    it('reveals edges for a token exactly at the reveal threshold', async () => {
+      const twelveCharToken = 'abcdefghijkl';
+      mockGetConfigValue.mockReturnValue(twelveCharToken);
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['get', 'apiToken']);
+
+      expect(console.log).toHaveBeenCalledWith('apiToken: abcd****ijkl');
     });
 
     it('prints the output directory in full (not sensitive)', async () => {
@@ -158,6 +192,16 @@ describe('runConfigCommand', () => {
       expect(process.exitCode).toBe(1);
     });
 
+    it('errors and stores nothing when the value is an empty string', async () => {
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['set', 'apiToken', '']);
+
+      expect(mockSetConfigValue).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    });
+
     it('errors and stores nothing for an unknown key', async () => {
       const runConfigCommand = await importCommand();
 
@@ -166,6 +210,20 @@ describe('runConfigCommand', () => {
       expect(mockSetConfigValue).not.toHaveBeenCalled();
       expect(console.error).toHaveBeenCalledWith(
         expect.stringContaining('Unknown config key: bogus'),
+      );
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('surfaces a store write failure as a friendly error', async () => {
+      mockSetConfigValue.mockImplementation(() => {
+        throw new Error('EACCES: permission denied');
+      });
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['set', 'apiToken', LONG_TOKEN]);
+
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('Could not save apiToken'),
       );
       expect(process.exitCode).toBe(1);
     });
@@ -182,7 +240,7 @@ describe('runConfigCommand', () => {
     });
   });
 
-  it('prints usage when no subcommand is given', async () => {
+  it('prints usage on stdout and exits 0 when no subcommand is given', async () => {
     const runConfigCommand = await importCommand();
 
     await runConfigCommand([]);
@@ -190,16 +248,18 @@ describe('runConfigCommand', () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Usage: markpost config'),
     );
+    expect(process.exitCode).toBeUndefined();
   });
 
-  it('prints usage for an unrecognized subcommand', async () => {
+  it('errors and exits 1 for an unrecognized subcommand', async () => {
     const runConfigCommand = await importCommand();
 
     await runConfigCommand(['bogus']);
 
-    expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('Usage: markpost config'),
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Unknown config subcommand: bogus'),
     );
     expect(mockSetConfigValue).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 });

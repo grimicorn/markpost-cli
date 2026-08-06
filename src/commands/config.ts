@@ -28,12 +28,20 @@ const NOT_SET_LABEL = '(not set)';
 const VISIBLE_EDGE_LENGTH = 4;
 const MASK_SEGMENT = '****';
 
-// Nothing shorter than both edges combined can reveal edges without exposing
-// most of the secret, so such tokens are fully masked.
-const MIN_LENGTH_TO_REVEAL_EDGES = VISIBLE_EDGE_LENGTH * 2;
+// Require at least as many hidden characters as revealed ones before showing
+// the edges — otherwise a short token would surface most of the secret.
+const MIN_LENGTH_TO_REVEAL_EDGES = VISIBLE_EDGE_LENGTH * 3;
+
+// Usage that accompanies an error goes to stderr (with a non-zero exit) so a
+// piped `config get` doesn't fold help text into its captured output.
+const failWithUsage = (message: string): void => {
+  console.error(chalk.redBright(message));
+  console.error(USAGE);
+  process.exitCode = 1;
+};
 
 const maskToken = (token: string): string => {
-  if (token.length <= MIN_LENGTH_TO_REVEAL_EDGES) {
+  if (token.length < MIN_LENGTH_TO_REVEAL_EDGES) {
     return MASK_SEGMENT;
   }
 
@@ -44,7 +52,7 @@ const maskToken = (token: string): string => {
 };
 
 const formatValue = (key: ConfigKey, value: string | undefined): string => {
-  if (value === undefined) {
+  if (!value) {
     return NOT_SET_LABEL;
   }
 
@@ -66,9 +74,7 @@ const getConfig = (key?: string): void => {
   }
 
   if (!isConfigKey(key)) {
-    console.error(chalk.redBright(`Unknown config key: ${key}`));
-    console.log(USAGE);
-    process.exitCode = 1;
+    failWithUsage(`Unknown config key: ${key}`);
     return;
   }
 
@@ -76,21 +82,28 @@ const getConfig = (key?: string): void => {
 };
 
 const setConfig = (key?: string, value?: string): void => {
-  if (!key || value === undefined) {
-    console.error(chalk.redBright('Both a key and a value are required.'));
-    console.log(USAGE);
-    process.exitCode = 1;
+  if (!key || !value) {
+    failWithUsage('Both a key and a non-empty value are required.');
     return;
   }
 
   if (!isConfigKey(key)) {
-    console.error(chalk.redBright(`Unknown config key: ${key}`));
-    console.log(USAGE);
+    failWithUsage(`Unknown config key: ${key}`);
+    return;
+  }
+
+  // `conf` throws on schema-validation and filesystem errors (e.g. an
+  // unwritable config dir); surface a friendly message rather than a stack
+  // trace.
+  try {
+    setConfigValue(key, value);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(chalk.redBright(`Could not save ${key}: ${detail}`));
     process.exitCode = 1;
     return;
   }
 
-  setConfigValue(key, value);
   console.log(chalk.greenBright(`Set ${key} to ${formatValue(key, value)}`));
 };
 
@@ -116,5 +129,13 @@ export const runConfigCommand = async (args: string[]): Promise<void> => {
     return;
   }
 
-  console.log(USAGE);
+  // A bare `markpost config` is a help request (stdout, exit 0); a typo'd
+  // subcommand is an error (stderr, exit 1) so it can't pass silently in a
+  // script.
+  if (!subcommand) {
+    console.log(USAGE);
+    return;
+  }
+
+  failWithUsage(`Unknown config subcommand: ${subcommand}`);
 };
