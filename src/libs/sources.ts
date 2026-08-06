@@ -1,11 +1,12 @@
 import {
+  apiFetch,
   assertApiSuccess,
   getApiToken,
   getBaseUrl,
+  logApiFailure,
   unwrapResourceAttributes,
   unwrapResourceCollection,
 } from '@/libs/api.js';
-import { logErrorMessage } from '@/libs/errors.js';
 import { ApiDeleteMeta, ApiDeleteResponse } from '@/types/api.types.js';
 import {
   CreateSourceInput,
@@ -22,17 +23,15 @@ import {
 // in whatever shape (list, single, meta) it expects.
 const authedSourcesRequest = async (
   path: string,
-  init: RequestInit = {},
+  init: Omit<RequestInit, 'signal'> = {},
 ): Promise<unknown> => {
-  const response = await fetch(`${getBaseUrl()}${path}`, {
+  const { response, body } = await apiFetch(`${getBaseUrl()}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${getApiToken()}`,
       ...init.headers,
     },
   });
-
-  const body = await response.json();
 
   assertApiSuccess(response, body);
 
@@ -47,10 +46,7 @@ export const fetchSources = async (): Promise<Source[]> => {
 
     return unwrapResourceCollection('fetchSources', body, 'source');
   } catch (error) {
-    logErrorMessage(
-      'fetchSources',
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure('fetchSources', error);
 
     return [];
   }
@@ -75,10 +71,7 @@ export const createSource = async (
 
     return unwrapResourceAttributes(body);
   } catch (error) {
-    logErrorMessage(
-      `createSource["${input.name}"]`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`createSource["${input.name}"]`, error);
 
     return null;
   }
@@ -107,10 +100,7 @@ export const updateSource = async (
 
     return unwrapResourceAttributes(body);
   } catch (error) {
-    logErrorMessage(
-      `updateSource["${uuid}"]`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`updateSource["${uuid}"]`, error);
 
     return null;
   }
@@ -129,10 +119,7 @@ export const deleteSource = async (
 
     return body.meta ?? null;
   } catch (error) {
-    logErrorMessage(
-      `deleteSource["${uuid}"]`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`deleteSource["${uuid}"]`, error);
 
     return null;
   }

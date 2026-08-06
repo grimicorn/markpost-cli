@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Source } from '@/types/sources.types.js';
 
@@ -60,8 +60,13 @@ describe('runSourcesCommand', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    process.exitCode = undefined;
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
   });
 
   it('always checks config before dispatching', async () => {
@@ -81,6 +86,19 @@ describe('runSourcesCommand', () => {
     await runSourcesCommand([]);
 
     expect(console.log).toHaveBeenCalledWith(expect.stringContaining('Usage: markpost sources'));
+  });
+
+  // A propagated failure (e.g. a request timeout, which the sources lib now
+  // re-throws) must exit non-zero like every other command, not print red
+  // text and exit 0.
+  it('exits non-zero when a sources call throws', async () => {
+    const { fetchSources } = await import('@/libs/sources.js');
+    vi.mocked(fetchSources).mockRejectedValue(new Error('boom'));
+    const { runSourcesCommand } = await import('@/commands/sources.js');
+
+    await runSourcesCommand(['list']);
+
+    expect(process.exitCode).toBe(1);
   });
 
   describe('list', () => {

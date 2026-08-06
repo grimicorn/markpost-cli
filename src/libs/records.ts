@@ -1,11 +1,12 @@
 import {
+  apiFetch,
   assertApiSuccess,
   getApiToken,
   getBaseUrl,
+  logApiFailure,
   unwrapResourceAttributes,
   unwrapResourceCollection,
 } from '@/libs/api.js';
-import { logErrorMessage } from '@/libs/errors.js';
 import {
   ApiDeleteMeta,
   ApiDeleteResponse,
@@ -116,7 +117,7 @@ export const fetchPaginatedRecords = async (
   links: ApiPaginationLinks;
 } | null> => {
   try {
-    const response = await fetch(
+    const { response, body: rawBody } = await apiFetch(
       `${getBaseUrl()}/api/records?${buildRecordsQuery(size, after)}`,
       {
         headers: {
@@ -125,7 +126,7 @@ export const fetchPaginatedRecords = async (
       },
     );
 
-    const body = (await response.json()) as RecordListApiResponse;
+    const body = rawBody as RecordListApiResponse;
 
     assertApiSuccess(response, body);
 
@@ -161,10 +162,7 @@ export const fetchPaginatedRecords = async (
 
     return { records, meta, links };
   } catch (error) {
-    logErrorMessage(
-      `fetchPaginatedRecords`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`fetchPaginatedRecords`, error);
 
     return null;
   }
@@ -175,7 +173,7 @@ export const createRecord = async (
   content: string,
 ): Promise<Record | null> => {
   try {
-    const response = await fetch(`${getBaseUrl()}/api/records`, {
+    const { response, body } = await apiFetch(`${getBaseUrl()}/api/records`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/vnd.api+json',
@@ -192,15 +190,11 @@ export const createRecord = async (
       }),
     });
 
-    const body = (await response.json()) as RecordApiResponse;
     assertApiSuccess(response, body);
 
-    return unwrapResourceAttributes(body);
+    return unwrapResourceAttributes(body as RecordApiResponse);
   } catch (error) {
-    logErrorMessage(
-      `createRecord["${title}"]`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`createRecord["${title}"]`, error);
 
     return null;
   }
@@ -208,22 +202,20 @@ export const createRecord = async (
 
 export const fetchRecord = async (uuid: string): Promise<Record | null> => {
   try {
-    const response = await fetch(`${getBaseUrl()}/api/records/${uuid}`, {
-      headers: {
-        Authorization: `Bearer ${getApiToken()}`,
+    const { response, body } = await apiFetch(
+      `${getBaseUrl()}/api/records/${uuid}`,
+      {
+        headers: {
+          Authorization: `Bearer ${getApiToken()}`,
+        },
       },
-    });
-
-    const body = (await response.json()) as RecordApiResponse;
+    );
 
     assertApiSuccess(response, body);
 
-    return unwrapResourceAttributes(body);
+    return unwrapResourceAttributes(body as RecordApiResponse);
   } catch (error) {
-    logErrorMessage(
-      `fetchRecord["${uuid}"]`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`fetchRecord["${uuid}"]`, error);
 
     return null;
   }
@@ -233,31 +225,31 @@ export const deleteRecords = async (
   uuids: string[],
 ): Promise<ApiDeleteMeta | null> => {
   try {
-    const response = await fetch(`${getBaseUrl()}/api/records`, {
-      method: 'DELETE',
-      headers: {
-        'Content-Type': 'application/vnd.api+json',
-        Authorization: `Bearer ${getApiToken()}`,
-      },
-      body: JSON.stringify({
-        data: {
-          type: 'records',
-          attributes: {
-            uuids: uuids,
-          },
+    const { response, body: rawBody } = await apiFetch(
+      `${getBaseUrl()}/api/records`,
+      {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/vnd.api+json',
+          Authorization: `Bearer ${getApiToken()}`,
         },
-      }),
-    });
+        body: JSON.stringify({
+          data: {
+            type: 'records',
+            attributes: {
+              uuids: uuids,
+            },
+          },
+        }),
+      },
+    );
 
-    const body = (await response.json()) as ApiDeleteResponse;
+    const body = rawBody as ApiDeleteResponse;
     assertApiSuccess(response, body);
 
     return body.meta ?? null;
   } catch (error) {
-    logErrorMessage(
-      `deleteRecords["${uuids.join(', ')}"]`,
-      error instanceof Error ? error.message : String(error),
-    );
+    logApiFailure(`deleteRecords["${uuids.join(', ')}"]`, error);
 
     return null;
   }

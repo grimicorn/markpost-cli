@@ -2,7 +2,7 @@
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
 import { writeMarkdown } from '@/libs/markdown.js';
-import { fetchSettings } from '@/libs/settings.js';
+import { fetchSettings, SettingsReadResult } from '@/libs/settings.js';
 import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
 import { runSourcesCommand } from '@/commands/sources.js';
@@ -93,7 +93,23 @@ async function runDefaultSync(): Promise<void> {
     // through to "delete". A successful read with no saved row (`settings:
     // null`) is a real account default, so it uses markpost's defaults
     // silently.
-    const settingsResult = await fetchSettings();
+    // A settings read failure (including a timeout) is deliberately
+    // non-fatal: the conservative `ok: false` branch below still writes
+    // records and only skips the irreversible auto-delete. Degrade a settings
+    // timeout here rather than letting it abort the whole sync — writing was
+    // never the risky operation, so a slow settings endpoint must not cost
+    // the user their records.
+    const settingsResult = await fetchSettings().catch(
+      (error: unknown): SettingsReadResult => {
+        console.error(
+          chalk.redBright(
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+
+        return { ok: false };
+      },
+    );
     const settings = settingsResult.ok ? settingsResult.settings : null;
     const conflictStrategy = normalizeConflictStrategy(
       settings?.conflictStrategy,
@@ -156,13 +172,24 @@ async function runDefaultSync(): Promise<void> {
     }
 
     spinner.start('Deleting records...');
+    // deleteRecords swallows its own errors to null but re-throws a timeout.
+    // Log the timeout's reason (deleteRecords never got to log it, since the
+    // rethrow happens before its logger) and route it to the same null branch
+    // below, so the user gets both the "why" and the specific "remain on the
+    // server" consequence with a non-zero exit — not the generic outer
+    // catch's "Something went wrong!".
     const deleteMeta = await deleteRecords(
       writtenRecords.map(({ record }) => record.uuid),
-    );
+    ).catch((error: unknown) => {
+      console.error(
+        chalk.redBright(error instanceof Error ? error.message : String(error)),
+      );
 
-    // deleteRecords swallows its own errors and returns null; reporting
-    // success here would lie (records still on the server, re-fetched and
-    // duplicated next run). Surface the failure loudly instead.
+      return null;
+    });
+
+    // Reporting success here would lie (records still on the server,
+    // re-fetched and duplicated next run). Surface the failure loudly instead.
     if (!deleteMeta) {
       spinner.error(
         'Failed to delete records from the server — they were written locally but remain on the server.',

@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { createRecord } from '@/libs/records.js';
+import { rethrowIfTimeout } from '@/libs/api.js';
 import { readMarkdown } from '@/libs/markdown.js';
 import { resolveMarkdownInputs } from '@/libs/files.js';
 import { checkConfig } from '@/libs/config.js';
@@ -31,6 +32,12 @@ const pushFile = async (filePath: string): Promise<PushResult> => {
     console.log(chalk.greenBright(`Pushed "${record.title}" (${record.uuid})`));
     return { filePath, pushed: true };
   } catch (error) {
+    // A timeout must abort the whole batch, not be logged per-file and
+    // retried on the next one: 50 stalled files would otherwise burn
+    // 50 × the timeout before reporting. `runPushCommand`'s catch reports it
+    // with a non-zero exit.
+    rethrowIfTimeout(error);
+
     console.error(
       chalk.redBright(`Failed to push "${filePath}": ${toMessage(error)}`),
     );
