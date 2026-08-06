@@ -29,8 +29,14 @@ const VISIBLE_EDGE_LENGTH = 4;
 const MASK_SEGMENT = '****';
 
 // Require at least as many hidden characters as revealed ones before showing
-// the edges — otherwise a short token would surface most of the secret.
-const MIN_LENGTH_TO_REVEAL_EDGES = VISIBLE_EDGE_LENGTH * 3;
+// the edges (both edges reveal VISIBLE_EDGE_LENGTH * 2) — otherwise a short
+// token would surface most of the secret.
+const MIN_LENGTH_TO_REVEAL_EDGES = VISIBLE_EDGE_LENGTH * 4;
+
+// The most arguments any subcommand consumes (`set <key> <value>`); more than
+// this means an unquoted value with spaces was split, so fail rather than
+// silently store a truncated value.
+const MAX_ARGS = 3;
 
 // Usage that accompanies an error goes to stderr (with a non-zero exit) so a
 // piped `config get` doesn't fold help text into its captured output.
@@ -64,7 +70,16 @@ const formatValue = (key: ConfigKey, value: string | undefined): string => {
 };
 
 const printKey = (key: ConfigKey): void => {
-  console.log(`${key}: ${formatValue(key, getConfigValue(key))}`);
+  // `conf` reads and deserializes the file on every access, so a corrupt or
+  // unreadable config throws here — the exact state a user runs `config get`
+  // to diagnose. Report it rather than dumping a stack trace.
+  try {
+    console.log(`${key}: ${formatValue(key, getConfigValue(key))}`);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(chalk.redBright(`Could not read ${key}: ${detail}`));
+    process.exitCode = 1;
+  }
 };
 
 const getConfig = (key?: string): void => {
@@ -112,6 +127,11 @@ const printPath = (): void => {
 };
 
 export const runConfigCommand = async (args: string[]): Promise<void> => {
+  if (args.length > MAX_ARGS) {
+    failWithUsage('Too many arguments. Quote values that contain spaces.');
+    return;
+  }
+
   const [subcommand, key, value] = args;
 
   if (subcommand === 'get') {

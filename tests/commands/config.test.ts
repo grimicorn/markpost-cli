@@ -105,8 +105,8 @@ describe('runConfigCommand', () => {
     });
 
     it('masks a token exactly one under the reveal threshold', async () => {
-      const elevenCharToken = 'abcdefghijk';
-      mockGetConfigValue.mockReturnValue(elevenCharToken);
+      const fifteenCharToken = 'abcdefghijklmno';
+      mockGetConfigValue.mockReturnValue(fifteenCharToken);
       const runConfigCommand = await importCommand();
 
       await runConfigCommand(['get', 'apiToken']);
@@ -115,13 +115,27 @@ describe('runConfigCommand', () => {
     });
 
     it('reveals edges for a token exactly at the reveal threshold', async () => {
-      const twelveCharToken = 'abcdefghijkl';
-      mockGetConfigValue.mockReturnValue(twelveCharToken);
+      const sixteenCharToken = 'abcdefghijklmnop';
+      mockGetConfigValue.mockReturnValue(sixteenCharToken);
       const runConfigCommand = await importCommand();
 
       await runConfigCommand(['get', 'apiToken']);
 
-      expect(console.log).toHaveBeenCalledWith('apiToken: abcd****ijkl');
+      expect(console.log).toHaveBeenCalledWith('apiToken: abcd****mnop');
+    });
+
+    it('surfaces a store read failure as a friendly error', async () => {
+      mockGetConfigValue.mockImplementation(() => {
+        throw new Error('EACCES: permission denied');
+      });
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['get', 'apiToken']);
+
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('Could not read apiToken'),
+      );
+      expect(process.exitCode).toBe(1);
     });
 
     it('prints the output directory in full (not sensitive)', async () => {
@@ -249,6 +263,18 @@ describe('runConfigCommand', () => {
       expect.stringContaining('Usage: markpost config'),
     );
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('rejects too many arguments instead of truncating a value', async () => {
+    const runConfigCommand = await importCommand();
+
+    await runConfigCommand(['set', 'outputDirectory', '/My', 'Notes']);
+
+    expect(mockSetConfigValue).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Too many arguments'),
+    );
+    expect(process.exitCode).toBe(1);
   });
 
   it('errors and exits 1 for an unrecognized subcommand', async () => {

@@ -20,7 +20,10 @@ export const config = new Conf({
 // The keys the CLI persists, in the order they're displayed. Kept as one
 // source of truth so the `config` command can iterate and validate against it
 // rather than hard-coding the key list a second time.
-export const CONFIG_KEYS = ['apiToken', 'outputDirectory'] as const;
+export const CONFIG_KEYS = [
+  'apiToken',
+  'outputDirectory',
+] as const satisfies readonly (keyof typeof schema)[];
 
 export type ConfigKey = (typeof CONFIG_KEYS)[number];
 
