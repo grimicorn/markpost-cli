@@ -15,6 +15,9 @@ const schema = {
 export const config = new Conf({
   projectName: packageJson.name,
   schema,
+  // The store holds the API token, so keep the file readable only by its
+  // owner instead of the default world-readable 0o644.
+  configFileMode: 0o600,
 });
 
 // The keys the CLI persists, in the order they're displayed. Kept as one

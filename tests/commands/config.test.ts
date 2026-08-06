@@ -216,6 +216,27 @@ describe('runConfigCommand', () => {
       expect(process.exitCode).toBe(1);
     });
 
+    it('errors and stores nothing when the value is only whitespace', async () => {
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['set', 'apiToken', '   ']);
+
+      expect(mockSetConfigValue).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+    });
+
+    it('stores the trimmed value', async () => {
+      const runConfigCommand = await importCommand();
+
+      await runConfigCommand(['set', 'outputDirectory', '  /home/user/notes  ']);
+
+      expect(mockSetConfigValue).toHaveBeenCalledWith(
+        'outputDirectory',
+        '/home/user/notes',
+      );
+    });
+
     it('errors and stores nothing for an unknown key', async () => {
       const runConfigCommand = await importCommand();
 
@@ -265,7 +286,7 @@ describe('runConfigCommand', () => {
     expect(process.exitCode).toBeUndefined();
   });
 
-  it('rejects too many arguments instead of truncating a value', async () => {
+  it('rejects too many arguments to set instead of truncating a value', async () => {
     const runConfigCommand = await importCommand();
 
     await runConfigCommand(['set', 'outputDirectory', '/My', 'Notes']);
@@ -277,15 +298,27 @@ describe('runConfigCommand', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it('errors and exits 1 for an unrecognized subcommand', async () => {
+  it('rejects extra arguments to get instead of ignoring them', async () => {
+    const runConfigCommand = await importCommand();
+
+    await runConfigCommand(['get', 'apiToken', 'outputDirectory']);
+
+    expect(mockGetConfigValue).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Too many arguments'),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('prints usage on stdout for an unrecognized subcommand', async () => {
     const runConfigCommand = await importCommand();
 
     await runConfigCommand(['bogus']);
 
-    expect(console.error).toHaveBeenCalledWith(
-      expect.stringContaining('Unknown config subcommand: bogus'),
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Usage: markpost config'),
     );
     expect(mockSetConfigValue).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBeUndefined();
   });
 });

@@ -33,10 +33,14 @@ const MASK_SEGMENT = '****';
 // token would surface most of the secret.
 const MIN_LENGTH_TO_REVEAL_EDGES = VISIBLE_EDGE_LENGTH * 4;
 
-// The most arguments any subcommand consumes (`set <key> <value>`); more than
-// this means an unquoted value with spaces was split, so fail rather than
-// silently store a truncated value.
-const MAX_ARGS = 3;
+// How many arguments each subcommand accepts, counting the subcommand itself.
+// More than this means an unquoted value with spaces was split, so fail rather
+// than silently store (or read from) a truncated value.
+const MAX_ARGS_BY_SUBCOMMAND = new Map<string, number>([
+  ['get', 2],
+  ['set', 3],
+  ['path', 1],
+]);
 
 // Usage that accompanies an error goes to stderr (with a non-zero exit) so a
 // piped `config get` doesn't fold help text into its captured output.
@@ -70,9 +74,10 @@ const formatValue = (key: ConfigKey, value: string | undefined): string => {
 };
 
 const printKey = (key: ConfigKey): void => {
-  // `conf` reads and deserializes the file on every access, so a corrupt or
-  // unreadable config throws here — the exact state a user runs `config get`
-  // to diagnose. Report it rather than dumping a stack trace.
+  // Guard the store read so an access-time failure surfaces a readable message
+  // instead of a raw stack trace. (A file corrupt enough to break parsing
+  // throws earlier, in the `conf` constructor at import time — see the
+  // follow-up note in the PR.)
   try {
     console.log(`${key}: ${formatValue(key, getConfigValue(key))}`);
   } catch (error) {
@@ -97,7 +102,9 @@ const getConfig = (key?: string): void => {
 };
 
 const setConfig = (key?: string, value?: string): void => {
-  if (!key || !value) {
+  const trimmedValue = value?.trim();
+
+  if (!key || !trimmedValue) {
     failWithUsage('Both a key and a non-empty value are required.');
     return;
   }
@@ -111,7 +118,7 @@ const setConfig = (key?: string, value?: string): void => {
   // unwritable config dir); surface a friendly message rather than a stack
   // trace.
   try {
-    setConfigValue(key, value);
+    setConfigValue(key, trimmedValue);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     console.error(chalk.redBright(`Could not save ${key}: ${detail}`));
@@ -119,7 +126,9 @@ const setConfig = (key?: string, value?: string): void => {
     return;
   }
 
-  console.log(chalk.greenBright(`Set ${key} to ${formatValue(key, value)}`));
+  console.log(
+    chalk.greenBright(`Set ${key} to ${formatValue(key, trimmedValue)}`),
+  );
 };
 
 const printPath = (): void => {
@@ -127,12 +136,16 @@ const printPath = (): void => {
 };
 
 export const runConfigCommand = async (args: string[]): Promise<void> => {
-  if (args.length > MAX_ARGS) {
-    failWithUsage('Too many arguments. Quote values that contain spaces.');
+  const [subcommand, key, value] = args;
+
+  const maxArgs = MAX_ARGS_BY_SUBCOMMAND.get(subcommand ?? '');
+
+  if (maxArgs !== undefined && args.length > maxArgs) {
+    failWithUsage(
+      `Too many arguments for \`config ${subcommand}\`. Quote values that contain spaces.`,
+    );
     return;
   }
-
-  const [subcommand, key, value] = args;
 
   if (subcommand === 'get') {
     getConfig(key);
@@ -149,13 +162,7 @@ export const runConfigCommand = async (args: string[]): Promise<void> => {
     return;
   }
 
-  // A bare `markpost config` is a help request (stdout, exit 0); a typo'd
-  // subcommand is an error (stderr, exit 1) so it can't pass silently in a
-  // script.
-  if (!subcommand) {
-    console.log(USAGE);
-    return;
-  }
-
-  failWithUsage(`Unknown config subcommand: ${subcommand}`);
+  // A bare `markpost config` or an unrecognized subcommand prints usage, the
+  // same convention `markpost records`/`markpost sources` follow.
+  console.log(USAGE);
 };
