@@ -7,6 +7,7 @@ import { runPushCommand } from '@/commands/push.js';
 import { runGetCommand } from '@/commands/get.js';
 import { runSourcesCommand } from '@/commands/sources.js';
 import { runRecordsCommand } from '@/commands/records.js';
+import { runConfigCommand } from '@/commands/config.js';
 import yoctoSpinner from 'yocto-spinner';
 import cliSpinners from 'cli-spinners';
 import chalk from 'chalk';
@@ -31,6 +32,7 @@ const COMMAND_HANDLERS = new Map<string, (args: string[]) => Promise<void>>([
   ['get', runGetCommand],
   ['sources', runSourcesCommand],
   ['records', runRecordsCommand],
+  ['config', runConfigCommand],
 ]);
 
 const commandHandler = COMMAND_HANDLERS.get(command);

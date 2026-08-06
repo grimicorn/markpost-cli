@@ -12,6 +12,7 @@ vi.mock('@/commands/push.js', () => ({ runPushCommand: vi.fn() }));
 vi.mock('@/commands/get.js', () => ({ runGetCommand: vi.fn() }));
 vi.mock('@/commands/sources.js', () => ({ runSourcesCommand: vi.fn() }));
 vi.mock('@/commands/records.js', () => ({ runRecordsCommand: vi.fn() }));
+vi.mock('@/commands/config.js', () => ({ runConfigCommand: vi.fn() }));
 vi.mock('yocto-spinner', () => ({ default: vi.fn() }));
 vi.mock('cli-spinners', () => ({ default: { dots: {} } }));
 vi.mock('chalk', () => ({

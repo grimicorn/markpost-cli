@@ -10,6 +10,25 @@ npm install -g @markpost/cli
 
 Once installed, run the CLI with the `markpost` command.
 
+## Configuration
+
+The CLI stores your API token and output directory in a `conf` file on disk.
+On first run it prompts for anything missing. Use the `config` command to
+inspect or change those values afterwards without hand-editing the file:
+
+```bash
+markpost config get                      # show all stored config
+markpost config get apiToken             # show one value
+markpost config set apiToken <token>     # change the stored API token
+markpost config set outputDirectory <path>
+markpost config path                     # print the config file location
+```
+
+The stored API token is a secret, so `config get` never prints it in full: it
+shows only the first and last four characters (e.g. `sk_a****wxyz`), and fully
+masks tokens too short to redact safely. The output directory is a plain path
+and shown in full.
+
 ## Development
 
 ### Prerequisites
