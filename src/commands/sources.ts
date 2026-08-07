@@ -7,7 +7,7 @@ import {
   updateSource,
 } from '@/libs/sources.js';
 import { checkConfig } from '@/libs/config.js';
-import { failWithUsage } from '@/libs/usage.js';
+import { failWithSubcommandUsage } from '@/libs/usage.js';
 import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 
 // Mirror the endpoint constants markpost's web app uses in
@@ -34,41 +34,37 @@ export const buildEndpointUrl = (
   return `${WEBHOOK_INGEST_BASE}/${endpointSlug}`;
 };
 
-const SOURCES_SUBCOMMANDS = new Set(['list', 'create', 'update', 'delete']);
+// One source of truth for both validation and routing: membership check and
+// handler come from the same Map, so a subcommand can never pass the guard
+// without a handler (which would otherwise risk falling through to the
+// destructive delete). Mirrors the COMMANDS Map in index.ts; a Map (not an
+// object) keeps a subcommand named "toString" from resolving to a prototype
+// member. The `uuid` arg is ignored by list/create.
+const SOURCES_HANDLERS = new Map<
+  string,
+  (uuid: string | undefined) => Promise<void>
+>([
+  ['list', () => listSources()],
+  ['create', () => createSourceCommand()],
+  ['update', (uuid) => updateSourceCommand(uuid)],
+  ['delete', (uuid) => deleteSourceCommand(uuid)],
+]);
 
 export const runSourcesCommand = async (args: string[]): Promise<void> => {
   const [subcommand, uuid] = args;
+  const handler = SOURCES_HANDLERS.get(subcommand);
 
   // A missing or unknown subcommand is a usage error (stderr + exit 1), caught
   // before the config check so a scripted caller fails loud instead of exiting
   // 0 on a typo.
-  if (!subcommand || !SOURCES_SUBCOMMANDS.has(subcommand)) {
-    const message = subcommand
-      ? `Unknown subcommand: ${subcommand}`
-      : 'No subcommand given.';
-    failWithUsage(message, USAGE);
+  if (!handler) {
+    failWithSubcommandUsage(subcommand, USAGE);
     return;
   }
 
   try {
     await checkConfig();
-
-    if (subcommand === 'list') {
-      await listSources();
-      return;
-    }
-
-    if (subcommand === 'create') {
-      await createSourceCommand();
-      return;
-    }
-
-    if (subcommand === 'update') {
-      await updateSourceCommand(uuid);
-      return;
-    }
-
-    await deleteSourceCommand(uuid);
+    await handler(uuid);
   } catch (error) {
     console.error(chalk.redBright(error));
     process.exitCode = 1;

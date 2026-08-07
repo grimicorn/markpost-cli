@@ -71,8 +71,12 @@ describe('runPushCommand', () => {
     await runPushCommand(['']);
 
     expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('No path given.'),
+    );
+    expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('Usage: markpost push'),
     );
+    expect(console.log).not.toHaveBeenCalled();
     expect(checkConfig).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
   });
