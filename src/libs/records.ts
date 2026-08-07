@@ -3,6 +3,7 @@ import {
   assertApiSuccess,
   getApiToken,
   getBaseUrl,
+  isSystemicApiFailure,
   logApiFailure,
   unwrapResourceAttributes,
   unwrapResourceCollection,
@@ -194,6 +195,14 @@ export const createRecord = async (
 
     return unwrapResourceAttributes(body as RecordApiResponse);
   } catch (error) {
+    // Auth (401/403) and 5xx failures doom every other record in a bulk push,
+    // so surface them to the caller to fail-fast rather than logging and
+    // returning null (which the caller can't distinguish from a per-file 4xx).
+    if (isSystemicApiFailure(error)) {
+      throw error;
+    }
+
+    // `logApiFailure` re-throws a timeout (fail loud) and logs everything else.
     logApiFailure(`createRecord["${title}"]`, error);
 
     return null;

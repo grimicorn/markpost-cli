@@ -2,12 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   API_REQUEST_TIMEOUT_MS,
-  ApiTimeoutError,
   apiFetch,
+  ApiRequestError,
+  ApiTimeoutError,
   assertApiSuccess,
+  describeSystemicFailure,
   formatErrorMessages,
   getApiToken,
   getBaseUrl,
+  isSystemicApiFailure,
   rethrowIfTimeout,
   unwrapResourceAttributes,
   unwrapResourceCollection,
@@ -174,6 +177,179 @@ describe('assertApiSuccess', () => {
 
     expect(() => assertApiSuccess({ ok: false } as Response, body)).toThrow(
       'Unknown error occurred',
+    );
+  });
+});
+
+describe('assertApiSuccess (systemic classification)', () => {
+  const authError: ApiError = {
+    status: '401',
+    title: 'Unauthorized',
+    detail: 'Invalid or missing token',
+    source: {},
+  };
+
+  it('throws an ApiRequestError carrying the response status', () => {
+    const body = { data: { errors: [authError] } };
+
+    expect(() =>
+      assertApiSuccess({ ok: false, status: 401 } as Response, body),
+    ).toThrow(ApiRequestError);
+
+    try {
+      assertApiSuccess({ ok: false, status: 401 } as Response, body);
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiRequestError);
+      expect((error as ApiRequestError).statusCode).toBe(401);
+      expect((error as ApiRequestError).isSystemic).toBe(true);
+    }
+  });
+
+  // markpost's `requireUser` throws a bare 401 with no `data.errors` body, so
+  // without a status fallback the user would see the useless "Unknown error
+  // occurred". The message must instead tell them the token is the problem.
+  it('gives an actionable message for an errorless 401 response', () => {
+    try {
+      assertApiSuccess({ ok: false, status: 401 } as Response, {});
+      throw new Error('expected assertApiSuccess to throw');
+    } catch (error) {
+      expect((error as ApiRequestError).message).toBe(
+        'Invalid or missing API token — run `markpost config` to set a valid one',
+      );
+      expect((error as ApiRequestError).isSystemic).toBe(true);
+    }
+  });
+
+  it('prefers a populated data.errors detail over the status fallback', () => {
+    const body = {
+      data: { errors: [authError] },
+    };
+
+    try {
+      assertApiSuccess({ ok: false, status: 401 } as Response, body);
+      throw new Error('expected assertApiSuccess to throw');
+    } catch (error) {
+      expect((error as ApiRequestError).message).toBe(
+        'Unauthorized: Invalid or missing token',
+      );
+    }
+  });
+
+  it('throws a non-systemic ApiRequestError for a 4xx the payload caused', () => {
+    const body = {
+      data: {
+        errors: [{ status: '422', title: 'Unprocessable', detail: 'Bad' }],
+      },
+    };
+
+    try {
+      assertApiSuccess({ ok: false, status: 422 } as Response, body);
+      throw new Error('expected assertApiSuccess to throw');
+    } catch (error) {
+      expect((error as ApiRequestError).statusCode).toBe(422);
+      expect((error as ApiRequestError).isSystemic).toBe(false);
+    }
+  });
+
+  // Classification keys off the HTTP status, not the body. markpost never sends
+  // a 2xx carrying errors (its handlers always throw non-2xx), but the CLI
+  // still rejects that off-contract shape — and must treat it as non-systemic
+  // (status 200), so an odd 200-with-errors body can't masquerade as an auth
+  // failure just because an inner error object claims `status: '401'`.
+  it('throws a non-systemic error for an ok response that still carries errors', () => {
+    const body = {
+      data: { errors: [{ status: '401', title: 'Odd', detail: 'off-contract' }] },
+    };
+
+    try {
+      assertApiSuccess({ ok: true, status: 200 } as Response, body);
+      throw new Error('expected assertApiSuccess to throw');
+    } catch (error) {
+      expect((error as ApiRequestError).statusCode).toBe(200);
+      expect((error as ApiRequestError).isSystemic).toBe(false);
+    }
+  });
+});
+
+describe('ApiRequestError', () => {
+  it('classifies 401 and 403 as auth failures (and systemic)', () => {
+    for (const statusCode of [401, 403]) {
+      const error = new ApiRequestError('nope', statusCode);
+      expect(error.isAuthFailure).toBe(true);
+      expect(error.isServerError).toBe(false);
+      expect(error.isSystemic).toBe(true);
+    }
+  });
+
+  it('classifies 429 as a rate limit (and systemic)', () => {
+    const error = new ApiRequestError('nope', 429);
+    expect(error.isRateLimited).toBe(true);
+    expect(error.isAuthFailure).toBe(false);
+    expect(error.isServerError).toBe(false);
+    expect(error.isSystemic).toBe(true);
+  });
+
+  it('classifies any 5xx as a server error (and systemic)', () => {
+    for (const statusCode of [500, 502, 503]) {
+      const error = new ApiRequestError('nope', statusCode);
+      expect(error.isServerError).toBe(true);
+      expect(error.isAuthFailure).toBe(false);
+      expect(error.isSystemic).toBe(true);
+    }
+  });
+
+  it('treats a 4xx that is not auth or rate limit as non-systemic', () => {
+    for (const statusCode of [400, 404, 409, 422]) {
+      expect(new ApiRequestError('nope', statusCode).isSystemic).toBe(false);
+    }
+  });
+});
+
+describe('isSystemicApiFailure', () => {
+  it('is true only for a systemic ApiRequestError', () => {
+    expect(isSystemicApiFailure(new ApiRequestError('nope', 401))).toBe(true);
+    expect(isSystemicApiFailure(new ApiRequestError('nope', 503))).toBe(true);
+  });
+
+  it('is false for a non-systemic ApiRequestError', () => {
+    expect(isSystemicApiFailure(new ApiRequestError('nope', 422))).toBe(false);
+  });
+
+  it('is false for a plain Error or non-error value', () => {
+    expect(isSystemicApiFailure(new Error('network down'))).toBe(false);
+    expect(isSystemicApiFailure('boom')).toBe(false);
+    expect(isSystemicApiFailure(undefined)).toBe(false);
+  });
+});
+
+describe('describeSystemicFailure', () => {
+  it('labels an auth failure with its status and message', () => {
+    const error = new ApiRequestError('Invalid or missing token', 401);
+    expect(describeSystemicFailure(error)).toBe(
+      'Authentication failed (HTTP 401): Invalid or missing token',
+    );
+  });
+
+  it('labels a rate limit with its status and message', () => {
+    const error = new ApiRequestError('Too many requests', 429);
+    expect(describeSystemicFailure(error)).toBe(
+      'Rate limited (HTTP 429): Too many requests',
+    );
+  });
+
+  it('labels a server error with its status and message', () => {
+    const error = new ApiRequestError('Unknown error occurred', 503);
+    expect(describeSystemicFailure(error)).toBe(
+      'Server error (HTTP 503): Unknown error occurred',
+    );
+  });
+
+  // Guards the label so a non-systemic error handed in by mistake can't be
+  // mislabeled as a server error.
+  it('falls back to a generic label for a non-systemic error', () => {
+    const error = new ApiRequestError('Duplicate record', 409);
+    expect(describeSystemicFailure(error)).toBe(
+      'Request failed (HTTP 409): Duplicate record',
     );
   });
 });

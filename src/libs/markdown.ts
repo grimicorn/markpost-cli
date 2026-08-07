@@ -15,7 +15,10 @@ import {
 } from 'node:path';
 import slugify from '@sindresorhus/slugify';
 import { config } from '@/libs/config.js';
-import { buildRecordDocument } from '@/libs/frontmatter.js';
+import {
+  buildRecordDocument,
+  stripFrontmatterDocument,
+} from '@/libs/frontmatter.js';
 import { Record } from '@/types/records.types.js';
 import {
   ConflictStrategy,
@@ -247,6 +250,11 @@ export const writeMarkdown = (
 // title comes from the filename (no extension). Note this is the filename
 // as written on disk, which may be a slug rather than the original title
 // if the file was previously pulled down by writeMarkdown.
+//
+// A file previously pulled by writeMarkdown carries the frontmatter block and
+// `# ` heading writeMarkdown added. Strip them here so pushing the file back
+// sends only the body — otherwise markpost would treat the frontmatter+heading
+// as content and wrap it in a second frontmatter block on ingestion.
 export const readMarkdown = (
   filePath: string,
 ): Pick<Record, 'title' | 'content'> => {
@@ -256,6 +264,6 @@ export const readMarkdown = (
 
   return {
     title: basename(filePath, extname(filePath)),
-    content: readFileSync(filePath, 'utf-8'),
+    content: stripFrontmatterDocument(readFileSync(filePath, 'utf-8')),
   };
 };

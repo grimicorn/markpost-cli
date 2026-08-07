@@ -15,7 +15,7 @@ import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 const WEBHOOK_INGEST_BASE = 'https://ingest.markpost.io/v1/hooks';
 const EMAIL_DOMAIN = 'in.markpost.io';
 
-const USAGE = `Usage: markpost sources <list|create|update|delete> [uuid]
+export const USAGE = `Usage: markpost sources <list|create|update|delete> [uuid]
 
   list           List all sources
   create         Create a new source (prompts for details)
