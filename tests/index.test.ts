@@ -748,12 +748,12 @@ describe('index', () => {
   });
 
   it.each([
-    ['DEL', 0x7f],
-    ['C1 CSI', 0x9b],
-    ['C1 OSC', 0x9d],
+    ['DEL', '0x7f', 0x7f],
+    ['C1 CSI', '0x9b', 0x9b],
+    ['C1 OSC', '0x9d', 0x9d],
   ])(
-    'strips the %s control character (0x%s) from a failed record title',
-    async (_name, codePoint) => {
+    'strips the %s control character (%s) from a failed record title',
+    async (_name, _hex, codePoint) => {
       const control = String.fromCharCode(codePoint);
       const evilRecord: Record = { uuid: 'evil-2', title: `A${control}B`, content: 'c', createdAt: '2024-01-06T00:00:00Z' };
       const { fetchAllRecords } = await import('@/libs/records.js');
@@ -855,6 +855,30 @@ describe('index', () => {
     );
     // Only the written record is deleted; skipped and failed stay on the server.
     expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('surfaces the message when a record write throws a non-Error value', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    // A thrown string (not an Error) must still render its text, never
+    // "[object Object]" — exercises extractErrorMessage's String(error) branch.
+    vi.mocked(writeMarkdown).mockImplementation(() => {
+      throw 'raw string failure';
+    });
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 0 });
+
+    await import('@/index.js');
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('raw string failure'),
+    );
     expect(process.exitCode).toBe(1);
   });
 });

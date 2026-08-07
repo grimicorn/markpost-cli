@@ -265,9 +265,11 @@ function sanitizeForTerminal(value: string): string {
   ).join('');
 }
 
-// End the write phase on the right indicator: a success checkmark when at
-// least one record wrote, but a red error when every record failed — a green
-// "Wrote 0 records!" would read as success on a run that wrote nothing.
+// End the write phase on the right indicator. A run where every record threw
+// is an error, not a success checkmark. An all-skipped run (the `skip` strategy
+// found every file already on disk) stays a success: nothing failed and the
+// records are intentionally left on the server, reported separately by the
+// yellow "Skipped N" line — so only an all-failed run flips to spinner.error.
 function reportWriteOutcome(
   spinner: ReturnType<typeof yoctoSpinner>,
   writtenCount: number,
@@ -419,7 +421,12 @@ async function runDefaultSync(): Promise<void> {
     spinner.success(`Deleted ${deleteMeta.deleted} records!`);
   } catch (error) {
     spinner.error('Something went wrong!');
-    console.error(chalk.redBright(error));
+    // Systemic errors surface here (unset output dir, a failed fetch/delete).
+    // Sanitize before printing: a server- or API-derived message can embed an
+    // escape sequence, same threat the per-record failure path guards against.
+    console.error(
+      chalk.redBright(sanitizeForTerminal(extractErrorMessage(error))),
+    );
     process.exitCode = 1;
   }
 }
