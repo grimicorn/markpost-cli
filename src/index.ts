@@ -206,7 +206,20 @@ async function runDefaultSync(): Promise<void> {
 
     // Fetch records
     spinner.start('Fetching records...');
-    const allRecords = await fetchAllRecords();
+    const recordsResult = await fetchAllRecords();
+
+    // A failed fetch must fail loud: reporting "No new records" and exiting 0
+    // on a network/auth error silently masks a broken sync in cron. An empty
+    // account still succeeds via the `ok: true` branch below.
+    if (!recordsResult.ok) {
+      spinner.error(
+        'Failed to fetch records from the server — nothing synced.',
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    const allRecords = recordsResult.records;
 
     if (allRecords.length === 0) {
       spinner.success('No new records, exiting...');

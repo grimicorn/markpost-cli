@@ -71,11 +71,26 @@ const extractAfterCursor = (
   return undefined;
 };
 
-export const fetchAllRecords = async (): Promise<Record[]> => {
+// A read either succeeded (`ok: true`, with `records` possibly empty for a
+// legitimately empty account) or the INITIAL page fetch failed (`ok: false`).
+// Collapsing a failed initial fetch to an empty array — the old behavior —
+// made a network/auth error indistinguishable from "no pending records", so
+// `sync` reported success and exited 0 while syncing nothing: a fail-loud
+// violation that silently masked sync failures in cron. This mirrors
+// `fetchSettings`'s `SettingsReadResult` so the caller must handle the failure
+// explicitly rather than reading a bare array that hides it.
+//
+// A LATER page failing is deliberately not a hard failure: the first page
+// already proved the connection healthy, so we keep the partial result (still
+// `ok: true`) rather than discarding pages already collected.
+export type FetchAllRecordsResult =
+  { ok: true; records: Record[] } | { ok: false };
+
+export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
   const initial = await fetchPaginatedRecords();
 
   if (!initial) {
-    return [];
+    return { ok: false };
   }
 
   const records = [initial.records];
@@ -97,7 +112,7 @@ export const fetchAllRecords = async (): Promise<Record[]> => {
     after = extractAfterCursor(subsequent.links?.next);
   }
 
-  return records.flat(1) as Record[];
+  return { ok: true, records: records.flat(1) as Record[] };
 };
 
 const buildRecordsQuery = (size: number, after?: string): string => {

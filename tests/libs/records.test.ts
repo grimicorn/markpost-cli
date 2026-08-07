@@ -55,9 +55,22 @@ describe('fetchAllRecords', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('returns [] when the initial fetch fails', async () => {
+  // A failed INITIAL fetch must surface as `{ ok: false }` — never an empty
+  // array, which the caller can't tell apart from a legitimately empty account
+  // and would report as "No new records" while exiting 0 (issue #63).
+  it('returns { ok: false } when the initial fetch fails', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    expect(await fetchAllRecords()).toEqual([]);
+    expect(await fetchAllRecords()).toEqual({ ok: false });
+  });
+
+  // A legitimately empty account is a success, distinct from a failed fetch.
+  it('returns { ok: true, records: [] } when the account has no records', async () => {
+    mockFetch({
+      data: [],
+      meta: { total: 0, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+    expect(await fetchAllRecords()).toEqual({ ok: true, records: [] });
   });
 
   it('returns records directly when there is only one page', async () => {
@@ -66,7 +79,7 @@ describe('fetchAllRecords', () => {
       meta: { total: 1, size: 100, hasMore: false },
       links: { next: null, prev: null },
     });
-    expect(await fetchAllRecords()).toEqual([mockRecord]);
+    expect(await fetchAllRecords()).toEqual({ ok: true, records: [mockRecord] });
     // A single page must not trigger a second fetch.
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
@@ -96,7 +109,10 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+    });
     // This is the regression check for the bug in #15: the second page must
     // actually be requested using the cursor from `links.next`, not skipped.
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -153,11 +169,10 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([
-      mockRecord,
-      mockRecord2,
-      mockRecord3,
-    ]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2, mockRecord3],
+    });
     expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
@@ -177,7 +192,9 @@ describe('fetchAllRecords', () => {
           }),
       })
       .mockRejectedValueOnce(new Error('Network error'));
-    expect(await fetchAllRecords()).toEqual([mockRecord]);
+    // A later page failing keeps the partial result a success — the initial
+    // page already proved the connection healthy.
+    expect(await fetchAllRecords()).toEqual({ ok: true, records: [mockRecord] });
   });
 
   it('stops instead of looping forever if the server repeats the same cursor', async () => {
@@ -194,7 +211,10 @@ describe('fetchAllRecords', () => {
         }),
     });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord],
+    });
     // The second response repeats the same `page[after]=abc-123` cursor as
     // the first, so the loop must break rather than fetch forever.
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -250,11 +270,10 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([
-      mockRecord,
-      mockRecord2,
-      mockRecord3,
-    ]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2, mockRecord3],
+    });
     // Without cycle detection this would alternate between cursor-a and
     // cursor-b forever; cursor-a must not be re-fetched once seen.
     expect(global.fetch).toHaveBeenCalledTimes(3);
@@ -285,7 +304,10 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+    });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       'https://example.com/api/records?page[size]=100&page[after]=abc%2Bxyz',
@@ -322,7 +344,10 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+    });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       'https://example.com/api/records?page[size]=100&page[after]=abc-123',
@@ -349,7 +374,10 @@ describe('fetchAllRecords', () => {
         }),
     });
 
-    await expect(fetchAllRecords()).resolves.toEqual([mockRecord]);
+    await expect(fetchAllRecords()).resolves.toEqual({
+      ok: true,
+      records: [mockRecord],
+    });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -378,7 +406,10 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+    });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       'https://example.com/api/records?page[size]=100&page[after]=YWJj%3D%3D',

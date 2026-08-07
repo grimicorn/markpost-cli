@@ -40,7 +40,7 @@ describe('runRecordsCommand', () => {
   it('always checks config before dispatching', async () => {
     const { checkConfig } = await import('@/libs/config.js');
     const { fetchAllRecords } = await import('@/libs/records.js');
-    vi.mocked(fetchAllRecords).mockResolvedValue([]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [] });
     const { runRecordsCommand } = await import('@/commands/records.js');
 
     await runRecordsCommand(['list']);
@@ -87,7 +87,7 @@ describe('runRecordsCommand', () => {
   describe('list', () => {
     it('prints "No records found." when there are none', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [] });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -97,7 +97,7 @@ describe('runRecordsCommand', () => {
 
     it('prints each fetched record', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([firstRecord, secondRecord]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [firstRecord, secondRecord] });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -120,12 +120,26 @@ describe('runRecordsCommand', () => {
       const { fetchAllRecords, deleteRecords } = await import(
         '@/libs/records.js'
       );
-      vi.mocked(fetchAllRecords).mockResolvedValue([firstRecord, secondRecord]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [firstRecord, secondRecord] });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
 
       expect(deleteRecords).not.toHaveBeenCalled();
+    });
+
+    // A failed fetch (`ok: false`) must not print "No records found." — it has
+    // to surface loudly and exit non-zero, distinct from an empty account.
+    it('fails loud and exits non-zero when the fetch fails', async () => {
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: false });
+      const { runRecordsCommand } = await import('@/commands/records.js');
+
+      await runRecordsCommand(['list']);
+
+      expect(console.log).not.toHaveBeenCalledWith('No records found.');
+      expect(console.error).toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
     });
   });
 

@@ -35,7 +35,16 @@ const printRecord = (record: Record): void => {
 // never touches deleteRecords: this is the safe alternative to running the
 // no-arg sync just to see what's pending.
 const listRecords = async (): Promise<void> => {
-  const records = await fetchAllRecords();
+  const result = await fetchAllRecords();
+
+  // A failed fetch must not masquerade as "No records found." — throw so the
+  // command's catch reports it loudly and exits non-zero, rather than printing
+  // the same message an empty account would produce.
+  if (!result.ok) {
+    throw new Error('Failed to fetch records from the server.');
+  }
+
+  const { records } = result;
 
   if (records.length === 0) {
     console.log('No records found.');
