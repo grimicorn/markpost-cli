@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Record } from '@/types/records.types.js';
 
@@ -34,6 +34,10 @@ describe('runRecordsCommand', () => {
     vi.resetAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    process.exitCode = undefined;
+  });
+
+  afterEach(() => {
     process.exitCode = undefined;
   });
 

@@ -109,6 +109,7 @@ describe('runSourcesCommand', () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('Usage: markpost sources'),
     );
+    expect(console.log).not.toHaveBeenCalled();
     expect(checkConfig).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
   });
