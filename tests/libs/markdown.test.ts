@@ -508,4 +508,22 @@ describe('readMarkdown', () => {
     );
     expect(result.content).toBe(mockRecord.content);
   });
+
+  it('strips the frontmatter block and heading from a previously-pulled file so the push carries only the body', () => {
+    const pulledDocument =
+      '---\n' +
+      'title: Deploy\n' +
+      'source: webhook/github\n' +
+      'created: 2026-06-14T09:41:02Z\n' +
+      'tags: [ci]\n' +
+      '---\n\n' +
+      '# Deploy\n\n' +
+      'Commit shipped.';
+    vi.mocked(existsSync).mockReturnValue(true);
+    vi.mocked(readFileSync).mockReturnValue(pulledDocument);
+
+    const result = readMarkdown('./notes/deploy.md');
+
+    expect(result.content).toBe('Commit shipped.');
+  });
 });
