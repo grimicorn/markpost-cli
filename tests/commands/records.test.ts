@@ -138,7 +138,13 @@ describe('runRecordsCommand', () => {
       await runRecordsCommand(['list']);
 
       expect(console.log).not.toHaveBeenCalledWith('No records found.');
-      expect(console.error).toHaveBeenCalled();
+      // Assert the specific fetch-failure message, not a bare console.error
+      // call any other throw in the command would also satisfy.
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Failed to fetch records from the server.',
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
   });

@@ -432,7 +432,12 @@ describe('index', () => {
 
     await import('@/index.js');
 
-    expect(mockSpinner.error).toHaveBeenCalled();
+    // Pin the fail-loud branch specifically: assert its exact message rather
+    // than a bare `spinner.error` call, so deleting this branch (and letting
+    // the generic catch's "Something went wrong!" fire instead) fails here.
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      'Failed to fetch records from the server — nothing synced.',
+    );
     expect(mockSpinner.success).not.toHaveBeenCalledWith(
       'No new records, exiting...',
     );
