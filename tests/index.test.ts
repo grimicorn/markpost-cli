@@ -6,7 +6,10 @@ import { SettingsReadResult } from '@/libs/settings.js';
 
 vi.mock('@/libs/config.js', () => ({ checkConfig: vi.fn() }));
 vi.mock('@/libs/records.js', () => ({ fetchAllRecords: vi.fn(), deleteRecords: vi.fn() }));
-vi.mock('@/libs/markdown.js', () => ({ writeMarkdown: vi.fn() }));
+vi.mock('@/libs/markdown.js', () => ({
+  writeMarkdown: vi.fn(),
+  ensureOutputDirectory: vi.fn(),
+}));
 vi.mock('@/libs/settings.js', () => ({ fetchSettings: vi.fn() }));
 vi.mock('@/commands/push.js', () => ({
   runPushCommand: vi.fn(),
@@ -623,7 +626,10 @@ describe('index', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it('contains a per-record write failure: keeps writing the rest and deletes only the written ones', async () => {
+  // Tests 1 and 2 share the same arrange: two records where the first write
+  // throws and the second succeeds. Extracted per rule of three so the two
+  // assertions read on their own.
+  const arrangeFailingFirstWrite = async (): Promise<void> => {
     const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
@@ -633,13 +639,18 @@ describe('index', () => {
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
-    // First record's write throws (e.g. EACCES); the batch must not abort.
     vi.mocked(writeMarkdown)
       .mockImplementationOnce(() => {
         throw new Error('EACCES: permission denied');
       })
       .mockReturnValueOnce('/mock/output/title-2.md');
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+  };
+
+  it('contains a per-record write failure: keeps writing the rest and deletes only the written ones', async () => {
+    await arrangeFailingFirstWrite();
+    const { deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
 
     await import('@/index.js');
 
@@ -653,21 +664,7 @@ describe('index', () => {
   });
 
   it('surfaces per-record write failures loudly and exits non-zero', async () => {
-    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
-    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
-    const { writeMarkdown } = await import('@/libs/markdown.js');
-    const { fetchSettings } = await import('@/libs/settings.js');
-    const { default: yoctoSpinner } = await import('yocto-spinner');
-
-    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
-    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
-    vi.mocked(writeMarkdown)
-      .mockImplementationOnce(() => {
-        throw new Error('EACCES: permission denied');
-      })
-      .mockReturnValueOnce('/mock/output/title-2.md');
-    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+    await arrangeFailingFirstWrite();
 
     await import('@/index.js');
 
@@ -683,7 +680,7 @@ describe('index', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it('exits non-zero and issues no delete when every record fails to write', async () => {
+  it('exits non-zero, shows an error (not a green checkmark), and issues no delete when every record fails to write', async () => {
     const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
     const { writeMarkdown } = await import('@/libs/markdown.js');
@@ -699,12 +696,80 @@ describe('index', () => {
 
     await import('@/index.js');
 
-    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 0 records!');
+    // A run that wrote nothing must not end the write phase on a success
+    // checkmark; it reports an error instead.
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      expect.stringContaining('all 2 failed'),
+    );
+    expect(mockSpinner.success).not.toHaveBeenCalledWith(
+      expect.stringContaining('Wrote'),
+    );
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('Failed to write 2 record(s)'),
     );
     // Nothing was written, so no delete request is issued.
     expect(mockSpinner.start).not.toHaveBeenCalledWith('Deleting records...');
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('sanitizes control characters in a failed record title before printing it', async () => {
+    // ESC (0x1b) built via fromCharCode so no raw control byte lives in source.
+    const escape = String.fromCharCode(0x1b);
+    const evilRecord: Record = { uuid: 'evil-1', title: `Bad${escape}[2JTitle`, content: 'c', createdAt: '2024-01-05T00:00:00Z' };
+    const { fetchAllRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([evilRecord]);
+    vi.mocked(writeMarkdown).mockImplementation(() => {
+      throw new Error('EACCES: permission denied');
+    });
+
+    await import('@/index.js');
+
+    // The ESC is replaced with a space so it can't drive an ANSI clear/overwrite
+    // sequence; the visible characters and the uuid survive intact.
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Bad [2JTitle (evil-1)'),
+    );
+    const escapePrinted = vi
+      .mocked(console.error)
+      .mock.calls.some(
+        ([arg]) => typeof arg === 'string' && arg.includes(escape),
+      );
+    expect(escapePrinted).toBe(false);
+  });
+
+  it('reports a systemic output-directory failure once, not as a per-record failure list', async () => {
+    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown, ensureOutputDirectory } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    // A batch-wide precondition failure throws before the per-record loop.
+    // `Once` so this throw can't leak into later tests (beforeEach's
+    // clearAllMocks resets call history but not implementations).
+    vi.mocked(ensureOutputDirectory).mockImplementationOnce(() => {
+      throw new Error('Output directory is not set!');
+    });
+
+    await import('@/index.js');
+
+    // The systemic error routes through the outer catch and is reported once —
+    // never per record, and no record is even attempted.
+    expect(writeMarkdown).not.toHaveBeenCalled();
+    expect(console.error).not.toHaveBeenCalledWith(
+      expect.stringContaining('Failed to write 2 record(s)'),
+    );
+    expect(mockSpinner.error).toHaveBeenCalledWith('Something went wrong!');
     expect(deleteRecords).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
   });
@@ -724,13 +789,19 @@ describe('index', () => {
       recordSkipped,
       recordFailed,
     ]);
-    // Written, skipped (null), failed (throw) — one of each.
-    vi.mocked(writeMarkdown)
-      .mockReturnValueOnce('/mock/output/test-title.md')
-      .mockReturnValueOnce(null)
-      .mockImplementationOnce(() => {
+    // Written, skipped (null), failed (throw) — one of each, keyed off the
+    // record so the outcome doesn't depend on call order.
+    vi.mocked(writeMarkdown).mockImplementation((record) => {
+      if (record.uuid === 'skip-1') {
+        return null;
+      }
+
+      if (record.uuid === 'fail-1') {
         throw new Error('EACCES: permission denied');
-      });
+      }
+
+      return '/mock/output/test-title.md';
+    });
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
     await import('@/index.js');
