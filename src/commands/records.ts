@@ -44,7 +44,19 @@ const listRecords = async (): Promise<void> => {
     throw new Error('Failed to fetch records from the server.');
   }
 
-  const { records } = result;
+  const { records, partial } = result;
+
+  // A partial read (a later page failed mid-pagination) must not present a
+  // truncated list as the full set. Warn and exit non-zero so the preview
+  // stays honest — `fetchPaginatedRecords` already logged the cause.
+  if (partial) {
+    console.error(
+      chalk.yellow(
+        'Warning: a later page failed to fetch — this list may be incomplete.',
+      ),
+    );
+    process.exitCode = 1;
+  }
 
   if (records.length === 0) {
     console.log('No records found.');

@@ -70,7 +70,11 @@ describe('fetchAllRecords', () => {
       meta: { total: 0, size: 100, hasMore: false },
       links: { next: null, prev: null },
     });
-    expect(await fetchAllRecords()).toEqual({ ok: true, records: [] });
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [],
+      partial: false,
+    });
   });
 
   it('returns records directly when there is only one page', async () => {
@@ -79,7 +83,11 @@ describe('fetchAllRecords', () => {
       meta: { total: 1, size: 100, hasMore: false },
       links: { next: null, prev: null },
     });
-    expect(await fetchAllRecords()).toEqual({ ok: true, records: [mockRecord] });
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: false,
+    });
     // A single page must not trigger a second fetch.
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
@@ -112,6 +120,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2],
+      partial: false,
     });
     // This is the regression check for the bug in #15: the second page must
     // actually be requested using the cursor from `links.next`, not skipped.
@@ -172,6 +181,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2, mockRecord3],
+      partial: false,
     });
     expect(global.fetch).toHaveBeenCalledTimes(3);
   });
@@ -192,9 +202,14 @@ describe('fetchAllRecords', () => {
           }),
       })
       .mockRejectedValueOnce(new Error('Network error'));
-    // A later page failing keeps the partial result a success — the initial
-    // page already proved the connection healthy.
-    expect(await fetchAllRecords()).toEqual({ ok: true, records: [mockRecord] });
+    // A later page failing keeps the pages already collected but flags the
+    // read `partial: true`, so the caller can surface the truncation rather
+    // than presenting one page as the whole set.
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
   });
 
   it('stops instead of looping forever if the server repeats the same cursor', async () => {
@@ -214,6 +229,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord],
+      partial: false,
     });
     // The second response repeats the same `page[after]=abc-123` cursor as
     // the first, so the loop must break rather than fetch forever.
@@ -273,6 +289,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2, mockRecord3],
+      partial: false,
     });
     // Without cycle detection this would alternate between cursor-a and
     // cursor-b forever; cursor-a must not be re-fetched once seen.
@@ -307,6 +324,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2],
+      partial: false,
     });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
@@ -347,6 +365,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2],
+      partial: false,
     });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
@@ -377,6 +396,7 @@ describe('fetchAllRecords', () => {
     await expect(fetchAllRecords()).resolves.toEqual({
       ok: true,
       records: [mockRecord],
+      partial: false,
     });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
@@ -409,6 +429,7 @@ describe('fetchAllRecords', () => {
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2],
+      partial: false,
     });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,

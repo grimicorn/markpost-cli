@@ -221,12 +221,20 @@ async function runDefaultSync(): Promise<void> {
 
     const allRecords = recordsResult.records;
 
-    if (allRecords.length === 0) {
+    // A later page failed mid-pagination: sync what was fetched, but fail loud
+    // (error mark + non-zero exit) so cron never treats a truncated sync as a
+    // clean one. The unfetched pages stay on the server for a later run.
+    if (recordsResult.partial) {
+      spinner.error(
+        `Fetched ${allRecords.length} record(s), but a later page failed — more remain on the server. Re-run to collect them.`,
+      );
+      process.exitCode = 1;
+    } else if (allRecords.length === 0) {
       spinner.success('No new records, exiting...');
       return;
+    } else {
+      spinner.success(`Fetched ${allRecords.length} records!`);
     }
-
-    spinner.success(`Fetched ${allRecords.length} records!`);
 
     // Write Records
     spinner.start('Writing records...');

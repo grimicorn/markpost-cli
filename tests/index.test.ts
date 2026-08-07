@@ -330,7 +330,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
@@ -348,7 +348,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
@@ -376,7 +376,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, mockRecord2] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, mockRecord2], partial: false });
     vi.mocked(writeMarkdown)
       .mockReturnValueOnce('/mock/output/test-title.md')
       .mockReturnValueOnce('/mock/output/title-2.md');
@@ -408,7 +408,7 @@ describe('index', () => {
     const { default: yoctoSpinner } = await import('yocto-spinner');
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [], partial: false });
 
     await import('@/index.js');
 
@@ -443,6 +443,43 @@ describe('index', () => {
     );
     expect(writeMarkdown).not.toHaveBeenCalled();
     expect(deleteRecords).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  // A partial read (a later page failed mid-pagination) must fail loud too —
+  // exit non-zero and mark the spinner errored — while still syncing the pages
+  // that were fetched, so cron never treats a truncated sync as clean.
+  it('fails loud but still syncs the fetched pages on a partial fetch', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      expect.stringContaining('a later page failed'),
+    );
+    expect(mockSpinner.success).not.toHaveBeenCalledWith(
+      'No new records, exiting...',
+    );
+    // The fetched page is still written and (with autoDelete on) deleted.
+    expect(writeMarkdown).toHaveBeenCalledWith(
+      mockRecord,
+      'suffix',
+      expect.any(Set),
+    );
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
     expect(process.exitCode).toBe(1);
   });
 
@@ -487,7 +524,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue({ ok: false });
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
 
     await import('@/index.js');
@@ -511,7 +548,7 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ conflictStrategy: 'overwrite' }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
@@ -530,7 +567,7 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ conflictStrategy: 'bogus-value' }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
@@ -549,7 +586,7 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
 
     await import('@/index.js');
@@ -569,7 +606,7 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: true }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
 
@@ -589,7 +626,7 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ conflictStrategy: 'skip' }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, mockRecord2] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, mockRecord2], partial: false });
     vi.mocked(writeMarkdown)
       .mockReturnValueOnce('/mock/output/test-title.md')
       .mockReturnValueOnce(null);
@@ -615,7 +652,7 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ conflictStrategy: 'skip' }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, mockRecord2] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, mockRecord2], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue(null);
 
     await import('@/index.js');
@@ -636,7 +673,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord], partial: false });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(deleteRecords).mockResolvedValue(null);
 

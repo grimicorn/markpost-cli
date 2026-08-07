@@ -71,20 +71,23 @@ const extractAfterCursor = (
   return undefined;
 };
 
-// A read either succeeded (`ok: true`, with `records` possibly empty for a
-// legitimately empty account) or the INITIAL page fetch failed (`ok: false`).
-// Collapsing a failed initial fetch to an empty array — the old behavior —
-// made a network/auth error indistinguishable from "no pending records", so
-// `sync` reported success and exited 0 while syncing nothing: a fail-loud
-// violation that silently masked sync failures in cron. This mirrors
+// A read either succeeded (`ok: true`) or the INITIAL page fetch failed
+// (`ok: false`). Collapsing a failed initial fetch to an empty array — the old
+// behavior — made a network/auth error indistinguishable from "no pending
+// records", so `sync` reported success and exited 0 while syncing nothing: a
+// fail-loud violation that silently masked sync failures in cron. This mirrors
 // `fetchSettings`'s `SettingsReadResult` so the caller must handle the failure
 // explicitly rather than reading a bare array that hides it.
 //
-// A LATER page failing is deliberately not a hard failure: the first page
-// already proved the connection healthy, so we keep the partial result (still
-// `ok: true`) rather than discarding pages already collected.
+// On success, `records` may be empty (a legitimately empty account) and
+// `partial` reports whether a LATER page failed mid-pagination. We keep the
+// pages already collected (discarding them would be worse), but flag the read
+// incomplete rather than silently returning a truncated result the caller
+// can't tell apart from a complete one — the same fail-loud concern one page
+// in. The caller surfaces `partial` (warn + non-zero exit); the unfetched
+// pages stay on the server for a later run.
 export type FetchAllRecordsResult =
-  { ok: true; records: Record[] } | { ok: false };
+  { ok: true; records: Record[]; partial: boolean } | { ok: false };
 
 export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
   const initial = await fetchPaginatedRecords();
@@ -96,6 +99,7 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
   const records = [initial.records];
   const seenCursors = new Set<string>();
   let after = extractAfterCursor(initial.links?.next);
+  let partial = false;
 
   // `seenCursors` bounds the loop against any repeating cursor (not just an
   // immediate repeat), so a misbehaving server can't hang the CLI or produce
@@ -105,6 +109,10 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
     const subsequent = await fetchPaginatedRecords(after);
 
     if (!subsequent) {
+      // A later page failed (`fetchPaginatedRecords` already logged why). Stop,
+      // but mark the read incomplete so the caller doesn't present a truncated
+      // set as the whole.
+      partial = true;
       break;
     }
 
@@ -112,7 +120,7 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
     after = extractAfterCursor(subsequent.links?.next);
   }
 
-  return { ok: true, records: records.flat(1) as Record[] };
+  return { ok: true, records: records.flat(1) as Record[], partial };
 };
 
 const buildRecordsQuery = (size: number, after?: string): string => {

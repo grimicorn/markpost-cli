@@ -11,6 +11,7 @@ vi.mock('chalk', () => ({
   default: {
     redBright: vi.fn((value: unknown) => value),
     bold: vi.fn((value: unknown) => value),
+    yellow: vi.fn((value: unknown) => value),
   },
 }));
 
@@ -40,7 +41,7 @@ describe('runRecordsCommand', () => {
   it('always checks config before dispatching', async () => {
     const { checkConfig } = await import('@/libs/config.js');
     const { fetchAllRecords } = await import('@/libs/records.js');
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [] });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [], partial: false });
     const { runRecordsCommand } = await import('@/commands/records.js');
 
     await runRecordsCommand(['list']);
@@ -87,7 +88,7 @@ describe('runRecordsCommand', () => {
   describe('list', () => {
     it('prints "No records found." when there are none', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [] });
+      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [], partial: false });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -100,6 +101,7 @@ describe('runRecordsCommand', () => {
       vi.mocked(fetchAllRecords).mockResolvedValue({
         ok: true,
         records: [firstRecord, secondRecord],
+        partial: false,
       });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
@@ -126,6 +128,7 @@ describe('runRecordsCommand', () => {
       vi.mocked(fetchAllRecords).mockResolvedValue({
         ok: true,
         records: [firstRecord, secondRecord],
+        partial: false,
       });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
@@ -150,6 +153,29 @@ describe('runRecordsCommand', () => {
         expect.objectContaining({
           message: 'Failed to fetch records from the server.',
         }),
+      );
+      expect(process.exitCode).toBe(1);
+    });
+
+    // A partial read (a later page failed) must still print what was fetched
+    // but warn it may be incomplete and exit non-zero — never present a
+    // truncated list as the full set.
+    it('warns and exits non-zero on a partial read, still printing what it got', async () => {
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord],
+        partial: true,
+      });
+      const { runRecordsCommand } = await import('@/commands/records.js');
+
+      await runRecordsCommand(['list']);
+
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('this list may be incomplete'),
+      );
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('First Record'),
       );
       expect(process.exitCode).toBe(1);
     });
