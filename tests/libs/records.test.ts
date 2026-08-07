@@ -92,6 +92,25 @@ describe('fetchAllRecords', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  // The server can signal more pages via `meta.hasMore` even when `links.next`
+  // is null (a malformed `links` is defaulted to `next: null` upstream). That
+  // is still a truncation, so the read must be flagged `partial: true` rather
+  // than reported complete.
+  it('flags partial when meta.hasMore is true but links.next is null', async () => {
+    mockFetch({
+      data: [{ attributes: mockRecord }],
+      meta: { total: 2, size: 1, hasMore: true },
+      links: { next: null, prev: null },
+    });
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
+    // No cursor to follow, so it must not fire a second fetch.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('follows links.next until hasMore is false, combining all pages', async () => {
     global.fetch = vi
       .fn()

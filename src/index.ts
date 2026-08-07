@@ -294,6 +294,17 @@ async function runDefaultSync(): Promise<void> {
     }
 
     spinner.success(`Deleted ${deleteMeta.deleted} records!`);
+
+    // End a partial sync on the truncation, not the green delete-success line —
+    // otherwise the last thing on screen reads as a clean run even though a
+    // page failed and records remain on the server (exit code is already 1).
+    if (recordsResult.partial) {
+      console.error(
+        chalk.yellow(
+          'Sync was incomplete — a later page failed to fetch. Re-run to collect the remaining records.',
+        ),
+      );
+    }
   } catch (error) {
     spinner.error('Something went wrong!');
     console.error(chalk.redBright(error));

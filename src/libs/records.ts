@@ -100,22 +100,27 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
   const seenCursors = new Set<string>();
   let partial = false;
 
-  // Resolve the next cursor from a page's links. A non-null `links.next` that
-  // yields no cursor — malformed percent-encoding, or an off-contract link
-  // carrying no `page[after]` — means the server had more pages we can't
-  // follow, so flag the read incomplete rather than treating it as a clean end
-  // of pagination.
-  const nextCursorFrom = (links: ApiPaginationLinks): string | undefined => {
-    const cursor = extractAfterCursor(links.next);
+  // Resolve the next cursor from a page. The server signals "more pages" via
+  // either `links.next` or `meta.hasMore` — and since `fetchPaginatedRecords`
+  // defaults a malformed `links` to `next: null`, `hasMore` can be the only
+  // surviving signal. If the page says there's more but yields no usable cursor
+  // (null/malformed link, missing `page[after]`, or the `hasMore`-only case),
+  // the server had pages we can't follow, so flag the read incomplete rather
+  // than treating it as a clean end of pagination.
+  const nextCursorFrom = (page: {
+    meta: PaginatedRecordsMeta;
+    links: ApiPaginationLinks;
+  }): string | undefined => {
+    const cursor = extractAfterCursor(page.links.next);
 
-    if (links.next && !cursor) {
+    if ((page.links.next || page.meta.hasMore) && !cursor) {
       partial = true;
     }
 
     return cursor;
   };
 
-  let after = nextCursorFrom(initial.links);
+  let after = nextCursorFrom(initial);
 
   while (after) {
     // `seenCursors` bounds the loop against any repeating cursor (not just an
@@ -139,7 +144,7 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
     }
 
     records.push(subsequent.records);
-    after = nextCursorFrom(subsequent.links);
+    after = nextCursorFrom(subsequent);
   }
 
   return { ok: true, records: records.flat(1) as Record[], partial };

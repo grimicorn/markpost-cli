@@ -480,6 +480,10 @@ describe('index', () => {
       expect.any(Set),
     );
     expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+    // The run ends on the truncation warning, not the green delete-success line.
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Sync was incomplete'),
+    );
     expect(process.exitCode).toBe(1);
   });
 
