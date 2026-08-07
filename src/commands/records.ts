@@ -4,7 +4,7 @@ import { fetchAllRecords, RecordListFilters } from '@/libs/records.js';
 import { checkConfig } from '@/libs/config.js';
 import { Record } from '@/types/records.types.js';
 
-const USAGE = `Usage: markpost records list [options]
+export const USAGE = `Usage: markpost records list [options]
 
   list  List records, optionally filtered by source, status, or search text
 
