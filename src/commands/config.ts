@@ -8,7 +8,7 @@ import {
   setConfigValue,
 } from '@/libs/config.js';
 
-const USAGE = `Usage: markpost config <get|set|path> [key] [value]
+export const USAGE = `Usage: markpost config <get|set|path> [key] [value]
 
   get [key]      Show all stored config, or just <key> if given
   set <key> <value>  Store <value> under <key>
