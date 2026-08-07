@@ -3,7 +3,7 @@ import { fetchAllRecords } from '@/libs/records.js';
 import { checkConfig } from '@/libs/config.js';
 import { Record } from '@/types/records.types.js';
 
-const USAGE = `Usage: markpost records <list>
+export const USAGE = `Usage: markpost records <list>
 
   list  List all pending records without deleting them`;
 

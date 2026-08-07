@@ -10,21 +10,40 @@ npm install -g @markpost/cli
 
 Once installed, run the CLI with the `markpost` command.
 
+## Usage
+
+Run `markpost help` (or `markpost --help` / `-h`) to see aggregated usage for
+every command. A bare `markpost` with no arguments prints that help and exits
+non-zero — it does **not** sync, so an accidental invocation can't delete
+server-side records.
+
+| Command | Description |
+|---|---|
+| `markpost sync` | Fetch all pending records, write each to a markdown file, and (when `autoDelete` is enabled) delete the written records from the server |
+| `markpost push <path...>` | Create records from one or more markdown files, directories, or glob patterns |
+| `markpost get <uuid>` | Fetch and display a single record |
+| `markpost sources <list\|create\|update\|delete> [uuid]` | Manage sources |
+| `markpost records list` | List pending records without deleting them |
+| `markpost help` | Show aggregated usage |
+
+The destructive fetch/write/delete sync runs only under the explicit
+`markpost sync` command.
+
 ## Sync behavior
 
-Running `markpost` with no subcommand syncs your records to `OUTPUT_DIRECTORY`,
-honoring your markpost account settings:
+`markpost sync` writes your records to `OUTPUT_DIRECTORY`, honoring your
+markpost account settings:
 
 - **`autoSync`** — when on (markpost's default), the sync does not exit after
   one pass: it self-schedules and re-runs every 5 minutes, staying in the
   foreground until you stop it with `Ctrl-C`. A one-line banner announces this
-  at startup. When off, `markpost` syncs once and exits. Records already written
-  during a session are not re-written on later iterations; a record edited on
-  the server after it was synced is not re-fetched until you restart the process
-  (the record contract carries no mutation timestamp to detect the edit). Note
-  that with `autoDelete` off each iteration re-fetches your full record set (the
-  API has no incremental cursor), so the per-interval fetch cost grows with your
-  history.
+  at startup. When off, `markpost sync` syncs once and exits. Records already
+  written during a session are not re-written on later iterations; a record
+  edited on the server after it was synced is not re-fetched until you restart
+  the process (the record contract carries no mutation timestamp to detect the
+  edit). Note that with `autoDelete` off each iteration re-fetches your full
+  record set (the API has no incremental cursor), so the per-interval fetch cost
+  grows with your history.
 - **`autoDelete`** — when on (markpost's default), records written locally are
   deleted from the server after a successful write; when off, they stay on the
   server. If a delete fails, the record is retried on the next `autoSync`
