@@ -2,6 +2,7 @@ import {
   assertApiSuccess,
   getApiToken,
   getBaseUrl,
+  isSystemicApiFailure,
   unwrapResourceAttributes,
   unwrapResourceCollection,
 } from '@/libs/api.js';
@@ -213,6 +214,13 @@ export const createRecord = async (
 
     return unwrapResourceAttributes(body);
   } catch (error) {
+    // Auth (401/403) and 5xx failures doom every other record in a bulk push,
+    // so surface them to the caller to fail-fast rather than logging and
+    // returning null (which the caller can't distinguish from a per-file 4xx).
+    if (isSystemicApiFailure(error)) {
+      throw error;
+    }
+
     logErrorMessage(
       `createRecord["${title}"]`,
       error instanceof Error ? error.message : String(error),

@@ -594,6 +594,66 @@ describe('createRecord', () => {
     expect(await createRecord('Test Title', 'Test Content')).toBeNull();
   });
 
+  // A per-file 4xx (the payload's fault) must stay a null return so a bulk
+  // push skips just this file and keeps going.
+  it('returns null for a non-systemic 4xx failure', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 422,
+      json: () =>
+        Promise.resolve({
+          data: { errors: [{ title: 'Unprocessable', detail: 'Bad' }] },
+        }),
+    });
+    expect(await createRecord('Test Title', 'Test Content')).toBeNull();
+  });
+
+  // Auth/5xx doom every other file in a batch, so createRecord surfaces them
+  // (as a systemic ApiRequestError) instead of swallowing them as null — that
+  // distinction is what lets push fail-fast.
+  it('re-throws a systemic auth (401) failure instead of returning null', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ data: { errors: [] } }),
+    });
+
+    await expect(
+      createRecord('Test Title', 'Test Content'),
+    ).rejects.toMatchObject({ statusCode: 401, isSystemic: true });
+  });
+
+  // End-to-end message check: a real bare-401 response (no data.errors, the
+  // shape markpost's requireUser actually sends) must surface an actionable
+  // message, not "Unknown error occurred", once composed for display.
+  it('surfaces an actionable message for a real errorless 401 response', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(
+      createRecord('Test Title', 'Test Content'),
+    ).rejects.toMatchObject({
+      statusCode: 401,
+      message:
+        'Invalid or missing API token — run `markpost config` to set a valid one',
+    });
+  });
+
+  it('re-throws a systemic server (5xx) failure instead of returning null', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: () => Promise.resolve({ data: { errors: [] } }),
+    });
+
+    await expect(
+      createRecord('Test Title', 'Test Content'),
+    ).rejects.toMatchObject({ statusCode: 503, isSystemic: true });
+  });
+
   // Regression coverage for #29: markpost's real resource objects carry
   // `type`/`id`/`links` alongside `attributes` (see `recordSerializer` in
   // markpost's server/utils/response.ts), which the CLI's old `ApiData` type
