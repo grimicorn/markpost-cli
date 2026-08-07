@@ -622,4 +622,130 @@ describe('index', () => {
     );
     expect(process.exitCode).toBe(1);
   });
+
+  it('contains a per-record write failure: keeps writing the rest and deletes only the written ones', async () => {
+    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    // First record's write throws (e.g. EACCES); the batch must not abort.
+    vi.mocked(writeMarkdown)
+      .mockImplementationOnce(() => {
+        throw new Error('EACCES: permission denied');
+      })
+      .mockReturnValueOnce('/mock/output/title-2.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    // Both records are attempted — the first throwing does not short-circuit
+    // the second.
+    expect(writeMarkdown).toHaveBeenCalledTimes(2);
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    // The failed record is left on the server (excluded from the delete); only
+    // the successfully-written one is deleted.
+    expect(deleteRecords).toHaveBeenCalledWith(['def-456']);
+  });
+
+  it('surfaces per-record write failures loudly and exits non-zero', async () => {
+    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(writeMarkdown)
+      .mockImplementationOnce(() => {
+        throw new Error('EACCES: permission denied');
+      })
+      .mockReturnValueOnce('/mock/output/title-2.md');
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to write 1 record(s)'),
+    );
+    // The failing record's title, uuid, and error message are named so the
+    // user knows exactly what didn't sync.
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Test Title (abc-123): EACCES: permission denied'),
+    );
+    // Non-zero exit so a cron run notices the partial failure.
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('exits non-zero and issues no delete when every record fails to write', async () => {
+    const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(writeMarkdown).mockImplementation(() => {
+      throw new Error('EISDIR: illegal operation on a directory');
+    });
+
+    await import('@/index.js');
+
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 0 records!');
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to write 2 record(s)'),
+    );
+    // Nothing was written, so no delete request is issued.
+    expect(mockSpinner.start).not.toHaveBeenCalledWith('Deleting records...');
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('reports written, skipped, and failed records as three distinct outcomes', async () => {
+    const recordSkipped: Record = { uuid: 'skip-1', title: 'Skip Me', content: 'c', createdAt: '2024-01-03T00:00:00Z' };
+    const recordFailed: Record = { uuid: 'fail-1', title: 'Fail Me', content: 'c', createdAt: '2024-01-04T00:00:00Z' };
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue([
+      mockRecord,
+      recordSkipped,
+      recordFailed,
+    ]);
+    // Written, skipped (null), failed (throw) — one of each.
+    vi.mocked(writeMarkdown)
+      .mockReturnValueOnce('/mock/output/test-title.md')
+      .mockReturnValueOnce(null)
+      .mockImplementationOnce(() => {
+        throw new Error('EACCES: permission denied');
+      });
+    vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
+
+    await import('@/index.js');
+
+    // Skipped and failed are counted separately, not lumped together — a
+    // regression to `skipped = total - written` would report "Skipped 2" here.
+    expect(mockSpinner.success).toHaveBeenCalledWith('Wrote 1 records!');
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('Skipped 1 record(s)'),
+    );
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to write 1 record(s)'),
+    );
+    // Only the written record is deleted; skipped and failed stay on the server.
+    expect(deleteRecords).toHaveBeenCalledWith(['abc-123']);
+    expect(process.exitCode).toBe(1);
+  });
 });

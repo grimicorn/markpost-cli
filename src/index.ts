@@ -146,28 +146,114 @@ async function dispatch(): Promise<void> {
 await dispatch();
 
 type WrittenRecord = { record: Record; filePath: string };
+type FailedRecord = { record: Record; error: unknown };
+
+// The three ways a single record's write can end: it landed at a path, the
+// `skip` strategy left an existing file untouched (`null` from writeMarkdown),
+// or the write threw (e.g. EACCES/EISDIR). Modeling all three as one tagged
+// result lets writeRecords sort each record without a nested try/if.
+type WriteOutcome =
+  | { status: 'written'; filePath: string }
+  | { status: 'skipped' }
+  | { status: 'failed'; error: unknown };
+
+type WriteRecordsResult = {
+  written: WrittenRecord[];
+  failed: FailedRecord[];
+  skipped: number;
+};
+
+// A function declaration (not a `const` arrow) so it's hoisted above the
+// top-level `await dispatch()` that kicks off the sync — the same reason
+// writeRecords/runDefaultSync are declarations. A `const` here sits in the
+// temporal dead zone when reportWriteFailures runs mid-sync.
+function extractErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// One record's write, contained: a throw (EACCES/EISDIR, a full disk, ...) is
+// caught and returned as a `failed` outcome so a single bad record can't abort
+// the batch and hide files already written for the records around it.
+function writeRecordSafely(
+  record: Record,
+  conflictStrategy: ConflictStrategy,
+  seenSlugs: Set<string>,
+): WriteOutcome {
+  try {
+    const filePath = writeMarkdown(record, conflictStrategy, seenSlugs);
+
+    if (filePath === null) {
+      return { status: 'skipped' };
+    }
+
+    return { status: 'written', filePath };
+  } catch (error) {
+    return { status: 'failed', error };
+  }
+}
 
 // Writes each record with the user's conflict strategy, keeping the record
-// alongside the path it landed at. A `null` return means the `skip` strategy
-// left an existing file untouched, so that record is dropped here and never
-// reaches the delete step — deleting a record the CLI never persisted would
-// lose it for good.
+// alongside the path it landed at. A `skipped` outcome means the `skip`
+// strategy left an existing file untouched, so that record never reaches the
+// delete step — deleting a record the CLI never persisted would lose it for
+// good. A `failed` outcome is collected (not thrown) so the rest of the batch
+// still writes; the caller surfaces the failures and exits non-zero.
 function writeRecords(
   records: Record[],
   conflictStrategy: ConflictStrategy,
-): WrittenRecord[] {
+): WriteRecordsResult {
   // One Set shared across the whole batch so `overwrite` can detect two
   // same-slug records in a single sync and avoid clobbering (see
-  // writeMarkdown/resolveStrategyForSlug). `map` preserves order, so the
-  // threading behaves the same as a sequential loop.
+  // writeMarkdown/resolveStrategyForSlug). A sequential loop preserves order
+  // and threads the same Set across every record.
   const seenSlugs = new Set<string>();
+  const written: WrittenRecord[] = [];
+  const failed: FailedRecord[] = [];
+  let skipped = 0;
 
-  return records
-    .map((record) => ({
-      record,
-      filePath: writeMarkdown(record, conflictStrategy, seenSlugs),
-    }))
-    .filter((written): written is WrittenRecord => written.filePath !== null);
+  for (const record of records) {
+    const outcome = writeRecordSafely(record, conflictStrategy, seenSlugs);
+
+    if (outcome.status === 'written') {
+      written.push({ record, filePath: outcome.filePath });
+      continue;
+    }
+
+    if (outcome.status === 'skipped') {
+      skipped += 1;
+      continue;
+    }
+
+    failed.push({ record, error: outcome.error });
+  }
+
+  return { written, failed, skipped };
+}
+
+// Fail loud on per-record write errors: name every record that couldn't be
+// written (with its error) and set a non-zero exit so a cron run notices,
+// rather than swallowing the failures. The failed records were never added to
+// `written`, so they're excluded from the delete step and stay on the server
+// for the next sync to retry. A no-op when nothing failed.
+function reportWriteFailures(failedRecords: FailedRecord[]): void {
+  if (failedRecords.length === 0) {
+    return;
+  }
+
+  console.error(
+    chalk.redBright(
+      `Failed to write ${failedRecords.length} record(s) — left on the server:`,
+    ),
+  );
+  failedRecords.forEach(({ record, error }) => {
+    console.error(
+      chalk.redBright(
+        `  -> ${record.title} (${record.uuid}): ${extractErrorMessage(error)}`,
+      ),
+    );
+  });
+
+  process.exitCode = 1;
 }
 
 // Default behavior when no subcommand is given: read the user's markpost
@@ -217,7 +303,11 @@ async function runDefaultSync(): Promise<void> {
 
     // Write Records
     spinner.start('Writing records...');
-    const writtenRecords = writeRecords(allRecords, conflictStrategy);
+    const {
+      written: writtenRecords,
+      failed: failedRecords,
+      skipped: skippedCount,
+    } = writeRecords(allRecords, conflictStrategy);
     spinner.success(`Wrote ${writtenRecords.length} records!`);
     writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
@@ -226,7 +316,6 @@ async function runDefaultSync(): Promise<void> {
     // Surface records the `skip` strategy left unwritten: they stay on the
     // server (they're excluded from the delete below), so the user needs to
     // know they weren't synced rather than silently losing count of them.
-    const skippedCount = allRecords.length - writtenRecords.length;
     if (skippedCount > 0) {
       console.log(
         chalk.yellow(
@@ -234,6 +323,8 @@ async function runDefaultSync(): Promise<void> {
         ),
       );
     }
+
+    reportWriteFailures(failedRecords);
 
     // Delete Records — skipped entirely when the user has autoDelete off, or
     // when nothing was written (a bare DELETE with an empty uuid list would
