@@ -217,10 +217,13 @@ const resolveStrategyForSlug = (
 // records written in one sync (see resolveStrategyForSlug).
 // Batch-wide precondition for writing: the output directory must be configured
 // and must exist. Both failures (unset config, an un-creatable/read-only path)
-// doom every record in a sync, not just one file, so a caller looping over
-// records calls this once up front and lets it throw — that keeps a genuinely
-// systemic error from being miscounted as N identical per-record failures (and
-// from re-running mkdirSync once per record). Returns the resolved directory.
+// doom every record in a sync, not just one file. A caller looping over records
+// calls this once up front and lets it throw, so a systemic failure that's
+// already present at the start of a sync surfaces once — not miscounted as N
+// identical per-record failures. writeMarkdown still calls it per record so it
+// stays self-contained and correct when used on its own; after the up-front
+// call created the directory, the per-record existsSync is true and mkdirSync
+// does not run again. Returns the resolved directory.
 export const ensureOutputDirectory = (): string => {
   const outputDirectory = getOutputDirectory();
 

@@ -28,13 +28,16 @@ const [commandName, ...commandArgs] = process.argv.slice(2);
 
 const SYNC_COMMAND = 'sync';
 
-// Highest C0 control code, and the DEL code point: any character at or below
-// the first (or equal to the second) is a control character. Declared up here
-// (above the top-level `await dispatch()`) so they're initialized before the
-// sync runs and calls sanitizeForTerminal — a `const` below that await would
-// sit in the temporal dead zone when the sync reads it.
+// Control-character code points to strip before printing untrusted text: the
+// C0 range (0x00–0x1f), DEL (0x7f), and the C1 range (0x80–0x9f, which carries
+// 8-bit CSI/OSC that some terminals still act on). Declared up here (above the
+// top-level `await dispatch()`) so they're initialized before the sync runs
+// and calls sanitizeForTerminal — a `const` below that await would sit in the
+// temporal dead zone when the sync reads it.
 const LAST_C0_CONTROL_CODE = 0x1f;
 const DELETE_CONTROL_CODE = 0x7f;
+const FIRST_C1_CONTROL_CODE = 0x80;
+const LAST_C1_CONTROL_CODE = 0x9f;
 
 // The fetch/write/delete sync is destructive (it can delete server records),
 // so it must be requested explicitly by name — never triggered by a bare,
@@ -240,7 +243,13 @@ function writeRecords(
 
 function isControlCharacter(character: string): boolean {
   const codePoint = character.codePointAt(0) ?? 0;
-  return codePoint <= LAST_C0_CONTROL_CODE || codePoint === DELETE_CONTROL_CODE;
+  const isC1Control =
+    codePoint >= FIRST_C1_CONTROL_CODE && codePoint <= LAST_C1_CONTROL_CODE;
+  return (
+    codePoint <= LAST_C0_CONTROL_CODE ||
+    codePoint === DELETE_CONTROL_CODE ||
+    isC1Control
+  );
 }
 
 // Replace control characters (C0 range + DEL) in any API-controlled string
@@ -288,9 +297,14 @@ function reportWriteFailures(failedRecords: FailedRecord[]): void {
     ),
   );
   failedRecords.forEach(({ record, error }) => {
+    // Sanitize the whole composed line: the uuid comes from the same untrusted
+    // API response as the title, and a filesystem error message embeds the
+    // (user-configured) target path — any of them could carry an escape.
     console.error(
       chalk.redBright(
-        `  -> ${sanitizeForTerminal(record.title)} (${record.uuid}): ${extractErrorMessage(error)}`,
+        sanitizeForTerminal(
+          `  -> ${record.title} (${record.uuid}): ${extractErrorMessage(error)}`,
+        ),
       ),
     );
   });

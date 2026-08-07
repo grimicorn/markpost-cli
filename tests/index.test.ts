@@ -626,9 +626,10 @@ describe('index', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  // Tests 1 and 2 share the same arrange: two records where the first write
-  // throws and the second succeeds. Extracted per rule of three so the two
-  // assertions read on their own.
+  // Tests 1 and 2 share the same arrange: two records where mockRecord's write
+  // throws and the second (def-456) succeeds. Extracted per rule of three so
+  // the two assertions read on their own. The write outcome is keyed off the
+  // record (not call order) to match the other write tests in this file.
   const arrangeFailingFirstWrite = async (): Promise<void> => {
     const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
     const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
@@ -639,11 +640,13 @@ describe('index', () => {
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
     vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
-    vi.mocked(writeMarkdown)
-      .mockImplementationOnce(() => {
+    vi.mocked(writeMarkdown).mockImplementation((record) => {
+      if (record.uuid === 'abc-123') {
         throw new Error('EACCES: permission denied');
-      })
-      .mockReturnValueOnce('/mock/output/title-2.md');
+      }
+
+      return '/mock/output/title-2.md';
+    });
     vi.mocked(deleteRecords).mockResolvedValue({ deleted: 1 });
   };
 
@@ -743,6 +746,41 @@ describe('index', () => {
       );
     expect(escapePrinted).toBe(false);
   });
+
+  it.each([
+    ['DEL', 0x7f],
+    ['C1 CSI', 0x9b],
+    ['C1 OSC', 0x9d],
+  ])(
+    'strips the %s control character (0x%s) from a failed record title',
+    async (_name, codePoint) => {
+      const control = String.fromCharCode(codePoint);
+      const evilRecord: Record = { uuid: 'evil-2', title: `A${control}B`, content: 'c', createdAt: '2024-01-06T00:00:00Z' };
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      const { writeMarkdown } = await import('@/libs/markdown.js');
+      const { fetchSettings } = await import('@/libs/settings.js');
+      const { default: yoctoSpinner } = await import('yocto-spinner');
+
+      vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+      vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+      vi.mocked(fetchAllRecords).mockResolvedValue([evilRecord]);
+      vi.mocked(writeMarkdown).mockImplementation(() => {
+        throw new Error('EACCES: permission denied');
+      });
+
+      await import('@/index.js');
+
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('A B (evil-2)'),
+      );
+      const controlPrinted = vi
+        .mocked(console.error)
+        .mock.calls.some(
+          ([arg]) => typeof arg === 'string' && arg.includes(control),
+        );
+      expect(controlPrinted).toBe(false);
+    },
+  );
 
   it('reports a systemic output-directory failure once, not as a per-record failure list', async () => {
     const mockRecord2: Record = { uuid: 'def-456', title: 'Title 2', content: 'Content 2', createdAt: '2024-01-02T00:00:00Z' };
