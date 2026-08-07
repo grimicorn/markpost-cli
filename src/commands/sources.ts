@@ -7,6 +7,7 @@ import {
   updateSource,
 } from '@/libs/sources.js';
 import { checkConfig } from '@/libs/config.js';
+import { failWithUsage } from '@/libs/usage.js';
 import { Source, SOURCE_TYPES, SourceType } from '@/types/sources.types.js';
 
 // Mirror the endpoint constants markpost's web app uses in
@@ -33,11 +34,24 @@ export const buildEndpointUrl = (
   return `${WEBHOOK_INGEST_BASE}/${endpointSlug}`;
 };
 
+const SOURCES_SUBCOMMANDS = new Set(['list', 'create', 'update', 'delete']);
+
 export const runSourcesCommand = async (args: string[]): Promise<void> => {
+  const [subcommand, uuid] = args;
+
+  // A missing or unknown subcommand is a usage error (stderr + exit 1), caught
+  // before the config check so a scripted caller fails loud instead of exiting
+  // 0 on a typo.
+  if (!subcommand || !SOURCES_SUBCOMMANDS.has(subcommand)) {
+    const message = subcommand
+      ? `Unknown subcommand: ${subcommand}`
+      : 'No subcommand given.';
+    failWithUsage(message, USAGE);
+    return;
+  }
+
   try {
     await checkConfig();
-
-    const [subcommand, uuid] = args;
 
     if (subcommand === 'list') {
       await listSources();
@@ -54,14 +68,10 @@ export const runSourcesCommand = async (args: string[]): Promise<void> => {
       return;
     }
 
-    if (subcommand === 'delete') {
-      await deleteSourceCommand(uuid);
-      return;
-    }
-
-    console.log(USAGE);
+    await deleteSourceCommand(uuid);
   } catch (error) {
     console.error(chalk.redBright(error));
+    process.exitCode = 1;
   }
 };
 

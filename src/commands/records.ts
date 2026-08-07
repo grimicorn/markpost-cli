@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { fetchAllRecords } from '@/libs/records.js';
 import { checkConfig } from '@/libs/config.js';
+import { failWithUsage } from '@/libs/usage.js';
 import { Record } from '@/types/records.types.js';
 
 export const USAGE = `Usage: markpost records <list>
@@ -8,17 +9,22 @@ export const USAGE = `Usage: markpost records <list>
   list  List all pending records without deleting them`;
 
 export const runRecordsCommand = async (args: string[]): Promise<void> => {
+  const [subcommand] = args;
+
+  // A missing or unknown subcommand is a usage error (stderr + exit 1), caught
+  // before the config check so a scripted caller fails loud instead of exiting
+  // 0 on a typo.
+  if (subcommand !== 'list') {
+    const message = subcommand
+      ? `Unknown subcommand: ${subcommand}`
+      : 'No subcommand given.';
+    failWithUsage(message, USAGE);
+    return;
+  }
+
   try {
     await checkConfig();
-
-    const [subcommand] = args;
-
-    if (subcommand === 'list') {
-      await listRecords();
-      return;
-    }
-
-    console.log(USAGE);
+    await listRecords();
   } catch (error) {
     console.error(chalk.redBright(error));
     process.exitCode = 1;
