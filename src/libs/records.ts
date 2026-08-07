@@ -202,7 +202,7 @@ export const createRecord = async (
 export const fetchRecord = async (uuid: string): Promise<Record | null> => {
   try {
     const body = (await authedRequest(
-      `/api/records/${uuid}`,
+      `/api/records/${encodeURIComponent(uuid)}`,
     )) as RecordApiResponse;
 
     return unwrapResourceAttributes(body);

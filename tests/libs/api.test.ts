@@ -184,11 +184,12 @@ describe('assertApiSuccess', () => {
 // detection to `assertApiSuccess` (so a 2xx body carrying `errors` still
 // throws, not just a non-2xx status).
 describe('authedRequest', () => {
-  const mockFetch = (responseBody: unknown, ok = true) => {
+  const mockFetch = (responseBody: unknown, ok = true, status = 200) => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
         ok,
+        status,
         json: () => Promise.resolve(responseBody),
       }),
     );
@@ -262,6 +263,28 @@ describe('authedRequest', () => {
     await expect(authedRequest('/api/records')).rejects.toThrow(
       'Unauthorized: Invalid or missing token',
     );
+  });
+
+  // The seam must propagate the HTTP status onto the thrown error, since
+  // `createRecord` only re-throws (fail-fast) when `isSystemicApiFailure`
+  // sees a systemic status. A seam that dropped the status would still pass
+  // the message-only assertions above, so classification is asserted here.
+  it('propagates the HTTP status so systemic failures stay classifiable', async () => {
+    mockFetch(
+      {
+        data: {
+          errors: [
+            { title: 'Unauthorized', detail: 'Invalid or missing token' },
+          ],
+        },
+      },
+      false,
+      401,
+    );
+    await expect(authedRequest('/api/records')).rejects.toMatchObject({
+      statusCode: 401,
+      isSystemic: true,
+    });
   });
 });
 
