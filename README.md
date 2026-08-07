@@ -10,6 +10,25 @@ npm install -g @markpost/cli
 
 Once installed, run the CLI with the `markpost` command.
 
+## Usage
+
+Run `markpost help` (or `markpost --help` / `-h`) to see aggregated usage for
+every command. A bare `markpost` with no arguments prints that help and exits
+non-zero — it does **not** sync, so an accidental invocation can't delete
+server-side records.
+
+| Command | Description |
+|---|---|
+| `markpost sync` | Fetch all pending records, write each to a markdown file, and (when `autoDelete` is enabled) delete the written records from the server |
+| `markpost push <path...>` | Create records from one or more markdown files, directories, or glob patterns |
+| `markpost get <uuid>` | Fetch and display a single record |
+| `markpost sources <list\|create\|update\|delete> [uuid]` | Manage sources |
+| `markpost records list` | List pending records without deleting them |
+| `markpost help` | Show aggregated usage |
+
+The destructive fetch/write/delete sync runs only under the explicit
+`markpost sync` command.
+
 ## Development
 
 ### Prerequisites

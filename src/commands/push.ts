@@ -4,7 +4,7 @@ import { readMarkdown } from '@/libs/markdown.js';
 import { resolveMarkdownInputs } from '@/libs/files.js';
 import { checkConfig } from '@/libs/config.js';
 
-const USAGE = `Usage: markpost push <path...>
+export const USAGE = `Usage: markpost push <path...>
 
   path  One or more markdown files, directories (recursed for .md files),
         or glob patterns to create records from`;
