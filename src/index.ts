@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { deleteRecords, fetchAllRecords } from '@/libs/records.js';
-import { writeMarkdown } from '@/libs/markdown.js';
+import { ensureOutputDirectory, writeMarkdown } from '@/libs/markdown.js';
 import { fetchSettings } from '@/libs/settings.js';
 import { runPushCommand, USAGE as PUSH_USAGE } from '@/commands/push.js';
 import { runGetCommand, USAGE as GET_USAGE } from '@/commands/get.js';
@@ -27,6 +27,14 @@ import {
 const [commandName, ...commandArgs] = process.argv.slice(2);
 
 const SYNC_COMMAND = 'sync';
+
+// Highest C0 control code, and the DEL code point: any character at or below
+// the first (or equal to the second) is a control character. Declared up here
+// (above the top-level `await dispatch()`) so they're initialized before the
+// sync runs and calls sanitizeForTerminal — a `const` below that await would
+// sit in the temporal dead zone when the sync reads it.
+const LAST_C0_CONTROL_CODE = 0x1f;
+const DELETE_CONTROL_CODE = 0x7f;
 
 // The fetch/write/delete sync is destructive (it can delete server records),
 // so it must be requested explicitly by name — never triggered by a bare,
@@ -230,6 +238,40 @@ function writeRecords(
   return { written, failed, skipped };
 }
 
+function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0;
+  return codePoint <= LAST_C0_CONTROL_CODE || codePoint === DELETE_CONTROL_CODE;
+}
+
+// Replace control characters (C0 range + DEL) in any API-controlled string
+// before it reaches the terminal. A record title is untrusted (see
+// markdown.ts slugifyTitle), so a title carrying ANSI escapes could otherwise
+// clear the screen or overwrite earlier output, including the failure warning
+// itself, with fabricated text. Done by code point rather than a regex to
+// avoid embedding control characters in source (eslint no-control-regex). The
+// uuid alongside keeps the record identifiable even if the title is emptied.
+function sanitizeForTerminal(value: string): string {
+  return Array.from(value, (character) =>
+    isControlCharacter(character) ? ' ' : character,
+  ).join('');
+}
+
+// End the write phase on the right indicator: a success checkmark when at
+// least one record wrote, but a red error when every record failed — a green
+// "Wrote 0 records!" would read as success on a run that wrote nothing.
+function reportWriteOutcome(
+  spinner: ReturnType<typeof yoctoSpinner>,
+  writtenCount: number,
+  failedCount: number,
+): void {
+  if (writtenCount === 0 && failedCount > 0) {
+    spinner.error(`Wrote 0 records — all ${failedCount} failed.`);
+    return;
+  }
+
+  spinner.success(`Wrote ${writtenCount} records!`);
+}
+
 // Fail loud on per-record write errors: name every record that couldn't be
 // written (with its error) and set a non-zero exit so a cron run notices,
 // rather than swallowing the failures. The failed records were never added to
@@ -248,7 +290,7 @@ function reportWriteFailures(failedRecords: FailedRecord[]): void {
   failedRecords.forEach(({ record, error }) => {
     console.error(
       chalk.redBright(
-        `  -> ${record.title} (${record.uuid}): ${extractErrorMessage(error)}`,
+        `  -> ${sanitizeForTerminal(record.title)} (${record.uuid}): ${extractErrorMessage(error)}`,
       ),
     );
   });
@@ -303,12 +345,16 @@ async function runDefaultSync(): Promise<void> {
 
     // Write Records
     spinner.start('Writing records...');
+    // A batch-wide precondition (unset/un-creatable output directory) throws
+    // here into the outer catch and is reported once, before the per-record
+    // loop — so a systemic error can't masquerade as N per-record failures.
+    ensureOutputDirectory();
     const {
       written: writtenRecords,
       failed: failedRecords,
       skipped: skippedCount,
     } = writeRecords(allRecords, conflictStrategy);
-    spinner.success(`Wrote ${writtenRecords.length} records!`);
+    reportWriteOutcome(spinner, writtenRecords.length, failedRecords.length);
     writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
     });
