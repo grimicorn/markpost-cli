@@ -98,13 +98,35 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
 
   const records = [initial.records];
   const seenCursors = new Set<string>();
-  let after = extractAfterCursor(initial.links?.next);
   let partial = false;
 
-  // `seenCursors` bounds the loop against any repeating cursor (not just an
-  // immediate repeat), so a misbehaving server can't hang the CLI or produce
-  // an unbounded stream of duplicate records.
-  while (after && !seenCursors.has(after)) {
+  // Resolve the next cursor from a page's links. A non-null `links.next` that
+  // yields no cursor — malformed percent-encoding, or an off-contract link
+  // carrying no `page[after]` — means the server had more pages we can't
+  // follow, so flag the read incomplete rather than treating it as a clean end
+  // of pagination.
+  const nextCursorFrom = (links: ApiPaginationLinks): string | undefined => {
+    const cursor = extractAfterCursor(links.next);
+
+    if (links.next && !cursor) {
+      partial = true;
+    }
+
+    return cursor;
+  };
+
+  let after = nextCursorFrom(initial.links);
+
+  while (after) {
+    // `seenCursors` bounds the loop against any repeating cursor (not just an
+    // immediate repeat), so a misbehaving server can't hang the CLI. A repeat
+    // means the server looped us over already-fetched pages while still
+    // advertising more, so stop but flag the truncation.
+    if (seenCursors.has(after)) {
+      partial = true;
+      break;
+    }
+
     seenCursors.add(after);
     const subsequent = await fetchPaginatedRecords(after);
 
@@ -117,7 +139,7 @@ export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
     }
 
     records.push(subsequent.records);
-    after = extractAfterCursor(subsequent.links?.next);
+    after = nextCursorFrom(subsequent.links);
   }
 
   return { ok: true, records: records.flat(1) as Record[], partial };

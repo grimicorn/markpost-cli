@@ -483,6 +483,35 @@ describe('index', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  // A partial read that fetched zero records must fail loud and return without
+  // running the write path (no confusing "Wrote 0 records!" after the error).
+  it('fails loud and writes nothing on a partial fetch that returned no records', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [],
+      partial: true,
+    });
+
+    await import('@/index.js');
+
+    expect(mockSpinner.error).toHaveBeenCalledWith(
+      expect.stringContaining('a later page failed'),
+    );
+    expect(mockSpinner.success).not.toHaveBeenCalledWith(
+      'No new records, exiting...',
+    );
+    expect(writeMarkdown).not.toHaveBeenCalled();
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
   it('calls spinner.error and logs to console.error when fetchAllRecords throws', async () => {
     const { fetchAllRecords } = await import('@/libs/records.js');
     const { default: yoctoSpinner } = await import('yocto-spinner');

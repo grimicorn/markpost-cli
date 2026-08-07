@@ -229,6 +229,13 @@ async function runDefaultSync(): Promise<void> {
         `Fetched ${allRecords.length} record(s), but a later page failed — more remain on the server. Re-run to collect them.`,
       );
       process.exitCode = 1;
+
+      // Nothing was fetched, so there's nothing to write or delete — return
+      // rather than running the write path and printing a confusing
+      // "Wrote 0 records!" right after the error mark.
+      if (allRecords.length === 0) {
+        return;
+      }
     } else if (allRecords.length === 0) {
       spinner.success('No new records, exiting...');
       return;

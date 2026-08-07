@@ -59,7 +59,13 @@ const listRecords = async (): Promise<void> => {
   }
 
   if (records.length === 0) {
-    console.log('No records found.');
+    // A partial read with zero records must not claim "No records found." — the
+    // read failed before any page came back, which is not an empty account.
+    console.log(
+      partial
+        ? 'No records fetched — the read failed partway through.'
+        : 'No records found.',
+    );
     return;
   }
 

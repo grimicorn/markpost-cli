@@ -226,10 +226,12 @@ describe('fetchAllRecords', () => {
         }),
     });
 
+    // A repeated cursor means the server still claims more pages while looping
+    // us over ones already fetched, so the read is incomplete: `partial: true`.
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord],
-      partial: false,
+      partial: true,
     });
     // The second response repeats the same `page[after]=abc-123` cursor as
     // the first, so the loop must break rather than fetch forever.
@@ -286,10 +288,12 @@ describe('fetchAllRecords', () => {
           }),
       });
 
+    // The cycle back to the already-seen cursor-a means the server still claims
+    // more while looping us, so the read is incomplete: `partial: true`.
     expect(await fetchAllRecords()).toEqual({
       ok: true,
       records: [mockRecord, mockRecord2, mockRecord3],
-      partial: false,
+      partial: true,
     });
     // Without cycle detection this would alternate between cursor-a and
     // cursor-b forever; cursor-a must not be re-fetched once seen.
@@ -393,10 +397,13 @@ describe('fetchAllRecords', () => {
         }),
     });
 
+    // `links.next` was present but its cursor is undecodable, so the server had
+    // a further page we can't follow: the read is incomplete (`partial: true`),
+    // not a clean end of pagination.
     await expect(fetchAllRecords()).resolves.toEqual({
       ok: true,
       records: [mockRecord],
-      partial: false,
+      partial: true,
     });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });

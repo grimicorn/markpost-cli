@@ -41,7 +41,11 @@ describe('runRecordsCommand', () => {
   it('always checks config before dispatching', async () => {
     const { checkConfig } = await import('@/libs/config.js');
     const { fetchAllRecords } = await import('@/libs/records.js');
-    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [], partial: false });
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [],
+      partial: false,
+    });
     const { runRecordsCommand } = await import('@/commands/records.js');
 
     await runRecordsCommand(['list']);
@@ -88,7 +92,11 @@ describe('runRecordsCommand', () => {
   describe('list', () => {
     it('prints "No records found." when there are none', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [], partial: false });
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -176,6 +184,26 @@ describe('runRecordsCommand', () => {
       );
       expect(console.log).toHaveBeenCalledWith(
         expect.stringContaining('First Record'),
+      );
+      expect(process.exitCode).toBe(1);
+    });
+
+    // A partial read that returned zero records must not claim "No records
+    // found." — the read failed before any page came back, not an empty account.
+    it('does not print "No records found." on a partial read with no records', async () => {
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: true,
+      });
+      const { runRecordsCommand } = await import('@/commands/records.js');
+
+      await runRecordsCommand(['list']);
+
+      expect(console.log).not.toHaveBeenCalledWith('No records found.');
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('the read failed partway through'),
       );
       expect(process.exitCode).toBe(1);
     });
