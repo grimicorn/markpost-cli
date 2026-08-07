@@ -11,10 +11,8 @@ export const USAGE = `Usage: markpost records <list>
 export const runRecordsCommand = async (args: string[]): Promise<void> => {
   const [subcommand] = args;
 
-  // A missing or unknown subcommand is a usage error (stderr + exit 1), caught
-  // before the config check so a scripted caller fails loud instead of exiting
-  // 0 on a typo. `list` is the only subcommand, so a plain equality check is
-  // clearer here than the Map dispatch sources needs for its four verbs.
+  // Validate before the config check so a bad subcommand fails on usage alone,
+  // without needing a configured account.
   if (subcommand !== 'list') {
     failWithSubcommandUsage(subcommand, USAGE);
     return;

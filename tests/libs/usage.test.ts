@@ -38,3 +38,41 @@ describe('failWithUsage', () => {
     expect(console.log).not.toHaveBeenCalled();
   });
 });
+
+describe('failWithSubcommandUsage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.exitCode = undefined;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.exitCode = undefined;
+  });
+
+  it('names the unknown token when a subcommand was given', async () => {
+    const { failWithSubcommandUsage } = await import('@/libs/usage.js');
+
+    failWithSubcommandUsage('bogus', 'Usage: markpost records <list>');
+
+    expect(console.error).toHaveBeenCalledWith('Unknown subcommand: bogus');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('reports a missing subcommand when none was given', async () => {
+    const { failWithSubcommandUsage } = await import('@/libs/usage.js');
+
+    failWithSubcommandUsage(undefined, 'Usage: markpost records <list>');
+
+    expect(console.error).toHaveBeenCalledWith('No subcommand given.');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('treats an empty-string subcommand as missing, matching push\'s empty-arg handling', async () => {
+    const { failWithSubcommandUsage } = await import('@/libs/usage.js');
+
+    failWithSubcommandUsage('', 'Usage: markpost records <list>');
+
+    expect(console.error).toHaveBeenCalledWith('No subcommand given.');
+  });
+});

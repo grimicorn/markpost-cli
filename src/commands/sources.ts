@@ -34,12 +34,10 @@ export const buildEndpointUrl = (
   return `${WEBHOOK_INGEST_BASE}/${endpointSlug}`;
 };
 
-// One source of truth for both validation and routing: membership check and
-// handler come from the same Map, so a subcommand can never pass the guard
-// without a handler (which would otherwise risk falling through to the
-// destructive delete). Mirrors the COMMANDS Map in index.ts; a Map (not an
-// object) keeps a subcommand named "toString" from resolving to a prototype
-// member. The `uuid` arg is ignored by list/create.
+// Membership check and handler come from the same Map, so a subcommand can
+// never pass the guard without a handler (which would otherwise risk falling
+// through to the destructive delete). A Map (not an object) keeps a subcommand
+// named "toString" from resolving to a prototype member.
 const SOURCES_HANDLERS = new Map<
   string,
   (uuid: string | undefined) => Promise<void>
@@ -54,9 +52,8 @@ export const runSourcesCommand = async (args: string[]): Promise<void> => {
   const [subcommand, uuid] = args;
   const handler = SOURCES_HANDLERS.get(subcommand);
 
-  // A missing or unknown subcommand is a usage error (stderr + exit 1), caught
-  // before the config check so a scripted caller fails loud instead of exiting
-  // 0 on a typo.
+  // Validate before the config check so a bad subcommand fails on usage alone,
+  // without needing a configured account.
   if (!handler) {
     failWithSubcommandUsage(subcommand, USAGE);
     return;

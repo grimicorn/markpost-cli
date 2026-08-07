@@ -92,6 +92,7 @@ describe('runRecordsCommand', () => {
     expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('Usage: markpost records'),
     );
+    expect(console.log).not.toHaveBeenCalled();
     expect(checkConfig).not.toHaveBeenCalled();
     expect(fetchAllRecords).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
