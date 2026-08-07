@@ -97,7 +97,10 @@ describe('runRecordsCommand', () => {
 
     it('prints each fetched record', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [firstRecord, secondRecord] });
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord, secondRecord],
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -120,7 +123,10 @@ describe('runRecordsCommand', () => {
       const { fetchAllRecords, deleteRecords } = await import(
         '@/libs/records.js'
       );
-      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [firstRecord, secondRecord] });
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord, secondRecord],
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
