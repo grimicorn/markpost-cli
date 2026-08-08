@@ -11,6 +11,7 @@ import {
   getApiToken,
   getBaseUrl,
   isSystemicApiFailure,
+  logApiFailure,
   rethrowIfTimeout,
   unwrapResourceAttributes,
   unwrapResourceCollection,
@@ -564,6 +565,51 @@ describe('apiFetch', () => {
     await expect(apiFetch('https://example.com/api/records')).rejects.toBe(
       networkError,
     );
+  });
+
+  // A circular `cause` chain must not spin the abort walk forever — the whole
+  // point of the helper is preventing hangs. `MAX_CAUSE_DEPTH` bounds the walk,
+  // so a self-referential cause whose names never match an abort terminates and
+  // passes the original error through. Remove the bound and this test hangs
+  // until vitest's per-test timeout fails it.
+  it('does not hang on a self-referential cause chain', async () => {
+    const looping = new TypeError('terminated') as TypeError & {
+      cause: unknown;
+    };
+    looping.cause = looping;
+    global.fetch = vi.fn().mockRejectedValue(looping);
+
+    await expect(apiFetch('https://example.com/api/records')).rejects.toBe(
+      looping,
+    );
+  });
+});
+
+describe('logApiFailure', () => {
+  beforeEach(() => {
+    vi.mocked(logErrorMessage).mockClear();
+  });
+
+  // The rethrow-vs-log split is the whole reason this seam exists: a timeout
+  // must escape the resilient catch (fail loud) and must NOT also be logged as
+  // a generic error, since callers like the sync log its reason themselves.
+  it('re-throws a timeout without logging it', () => {
+    const timeout = new ApiTimeoutError('https://example.com/api/records');
+
+    expect(() => logApiFailure('fetchThing', timeout)).toThrow(timeout);
+    expect(logErrorMessage).not.toHaveBeenCalled();
+  });
+
+  it('logs the message of any non-timeout error without throwing', () => {
+    expect(() =>
+      logApiFailure('fetchThing', new Error('server error')),
+    ).not.toThrow();
+    expect(logErrorMessage).toHaveBeenCalledWith('fetchThing', 'server error');
+  });
+
+  it('stringifies a non-Error thrown value when logging', () => {
+    expect(() => logApiFailure('fetchThing', 'boom')).not.toThrow();
+    expect(logErrorMessage).toHaveBeenCalledWith('fetchThing', 'boom');
   });
 });
 
