@@ -1248,11 +1248,7 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue({
-      ok: true,
-      records: [mockRecord, recordSkipped, recordFailed],
-      partial: false,
-    });
+    vi.mocked(fetchAllRecords).mockResolvedValue({ ok: true, records: [mockRecord, recordSkipped, recordFailed], partial: false });
     // Written, skipped (null), failed (throw) — one of each, keyed off the
     // record so the outcome doesn't depend on call order.
     vi.mocked(writeMarkdown).mockImplementation((record) => {
