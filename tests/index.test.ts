@@ -823,10 +823,10 @@ describe('index', () => {
     expect(mockSpinner.success).not.toHaveBeenCalledWith(
       expect.stringContaining('Marked'),
     );
-    expect(console.log).toHaveBeenCalledWith(
+    expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('/mock/output/title-2.md'),
     );
-    expect(console.log).not.toHaveBeenCalledWith(
+    expect(console.error).not.toHaveBeenCalledWith(
       expect.stringContaining('! abc-123'),
     );
     expect(process.exitCode).toBe(1);
@@ -870,11 +870,87 @@ describe('index', () => {
     expect(mockSpinner.error).toHaveBeenCalledWith(
       expect.stringContaining('Failed to mark 1 record(s) synced'),
     );
-    expect(console.log).toHaveBeenCalledWith(
+    expect(console.error).toHaveBeenCalledWith(
       expect.stringContaining('! uuid-10 -> /mock/output/uuid-10.md'),
     );
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('Marked 10 record(s) synced despite'),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('warns the sync was incomplete on the mark-synced path when a page failed', async () => {
+    const { fetchAllRecords, markRecordSynced } = await import(
+      '@/libs/records.js'
+    );
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoDelete: false }),
+    );
+    // A later page failed mid-pagination but the fetched page still marks synced.
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
+    vi.mocked(markRecordSynced).mockResolvedValue(true);
+
+    await import('@/index.js');
+
+    // The run must not finish on the green "Marked" line while a page is still
+    // outstanding — the truncation warning has the last word and the exit is 1.
+    expect(mockSpinner.success).toHaveBeenCalledWith('Marked 1 records synced!');
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Sync was incomplete'),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('sanitizes control characters in a failed mark-synced record line', async () => {
+    // ESC (0x1b) built via fromCharCode so no raw control byte lives in source.
+    const escape = String.fromCharCode(0x1b);
+    const evilRecord: Record = {
+      uuid: `evil${escape}[2J-uuid`,
+      title: 'Evil',
+      content: 'c',
+      createdAt: '2024-01-07T00:00:00Z',
+    };
+    const { fetchAllRecords, markRecordSynced } = await import(
+      '@/libs/records.js'
+    );
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoDelete: false }),
+    );
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [evilRecord],
+      partial: false,
+    });
+    vi.mocked(writeMarkdown).mockReturnValue('/mock/output/evil.md');
+    vi.mocked(markRecordSynced).mockResolvedValue(false);
+
+    await import('@/index.js');
+
+    // The ESC in the API-supplied uuid must never reach the terminal raw, where
+    // it could drive an ANSI clear/overwrite and hide the failure.
+    const escapePrinted = vi
+      .mocked(console.error)
+      .mock.calls.some(
+        ([arg]) => typeof arg === 'string' && arg.includes(escape),
+      );
+    expect(escapePrinted).toBe(false);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('/mock/output/evil.md'),
     );
     expect(process.exitCode).toBe(1);
   });

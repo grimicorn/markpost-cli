@@ -366,7 +366,13 @@ function reportMarkFailures(
     `Failed to mark ${failures.length} record(s) synced — written locally but still pending on the server; they may be re-written next run.`,
   );
   failures.forEach(({ record, filePath }) => {
-    console.log(chalk.dim(`  ! ${record.uuid} -> ${filePath}`));
+    // Sanitize the composed line: record.uuid comes from the same untrusted API
+    // response as a title, and filePath embeds the user-configured output path —
+    // either could carry an escape sequence. Route to stderr like the write-
+    // failure list so `2>` captures exactly which files are still pending.
+    console.error(
+      chalk.dim(sanitizeForTerminal(`  ! ${record.uuid} -> ${filePath}`)),
+    );
   });
 
   if (markedCount > 0) {
@@ -404,6 +410,22 @@ async function markWrittenRecordsSynced(
   }
 
   spinner.success(`Marked ${writtenRecords.length} records synced!`);
+}
+
+// Ends a truncated sync on the truncation warning, never on a green success
+// line — otherwise the last thing on screen reads as a clean run even though a
+// page failed and records remain on the server (exit code is already 1). Called
+// before every path that would otherwise finish on a success mark.
+function reportIncompleteSync(partial: boolean): void {
+  if (!partial) {
+    return;
+  }
+
+  console.error(
+    chalk.yellow(
+      'Sync was incomplete — a later page failed to fetch. Re-run to collect the remaining records.',
+    ),
+  );
 }
 
 // Default behavior when no subcommand is given: read the user's markpost
@@ -524,6 +546,7 @@ async function runDefaultSync(): Promise<void> {
           '  Settings unreadable — records left pending; they will be re-written as new files each run until settings are readable.',
         ),
       );
+      reportIncompleteSync(recordsResult.partial);
       return;
     }
 
@@ -532,6 +555,7 @@ async function runDefaultSync(): Promise<void> {
     // files.
     if (!autoDelete) {
       await markWrittenRecordsSynced(writtenRecords, spinner);
+      reportIncompleteSync(recordsResult.partial);
       return;
     }
 
@@ -560,16 +584,7 @@ async function runDefaultSync(): Promise<void> {
 
     spinner.success(`Deleted ${deleteMeta.deleted} records!`);
 
-    // End a partial sync on the truncation, not the green delete-success line —
-    // otherwise the last thing on screen reads as a clean run even though a
-    // page failed and records remain on the server (exit code is already 1).
-    if (recordsResult.partial) {
-      console.error(
-        chalk.yellow(
-          'Sync was incomplete — a later page failed to fetch. Re-run to collect the remaining records.',
-        ),
-      );
-    }
+    reportIncompleteSync(recordsResult.partial);
   } catch (error) {
     spinner.error('Something went wrong!');
     // Systemic errors surface here (unset output dir, a failed fetch/delete).
