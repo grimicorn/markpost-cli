@@ -5,7 +5,7 @@ import {
   fetchAllRecords,
   markRecordSynced,
 } from '@/libs/records.js';
-import { writeMarkdown } from '@/libs/markdown.js';
+import { ensureOutputDirectory, writeMarkdown } from '@/libs/markdown.js';
 import { fetchSettings } from '@/libs/settings.js';
 import { runPushCommand, USAGE as PUSH_USAGE } from '@/commands/push.js';
 import { runGetCommand, USAGE as GET_USAGE } from '@/commands/get.js';
@@ -41,6 +41,17 @@ const MARK_SYNCED_CONCURRENCY = 10;
 const [commandName, ...commandArgs] = process.argv.slice(2);
 
 const SYNC_COMMAND = 'sync';
+
+// Control-character code points to strip before printing untrusted text: the
+// C0 range (0x00–0x1f), DEL (0x7f), and the C1 range (0x80–0x9f, which carries
+// 8-bit CSI/OSC that some terminals still act on). Declared up here (above the
+// top-level `await dispatch()`) so they're initialized before the sync runs
+// and calls sanitizeForTerminal — a `const` below that await would sit in the
+// temporal dead zone when the sync reads it.
+const LAST_C0_CONTROL_CODE = 0x1f;
+const DELETE_CONTROL_CODE = 0x7f;
+const FIRST_C1_CONTROL_CODE = 0x80;
+const LAST_C1_CONTROL_CODE = 0x9f;
 
 // The fetch/write/delete sync is destructive (it can delete server records),
 // so it must be requested explicitly by name — never triggered by a bare,
@@ -160,28 +171,161 @@ async function dispatch(): Promise<void> {
 await dispatch();
 
 type WrittenRecord = { record: Record; filePath: string };
+type FailedRecord = { record: Record; error: unknown };
+
+// The three ways a single record's write can end: it landed at a path, the
+// `skip` strategy left an existing file untouched (`null` from writeMarkdown),
+// or the write threw (e.g. EACCES/EISDIR). Modeling all three as one tagged
+// result lets writeRecords sort each record without a nested try/if.
+type WriteOutcome =
+  | { status: 'written'; filePath: string }
+  | { status: 'skipped' }
+  | { status: 'failed'; error: unknown };
+
+type WriteRecordsResult = {
+  written: WrittenRecord[];
+  failed: FailedRecord[];
+  skipped: number;
+};
+
+// A function declaration (not a `const` arrow) so it's hoisted above the
+// top-level `await dispatch()` that kicks off the sync — the same reason
+// writeRecords/runDefaultSync are declarations. A `const` here sits in the
+// temporal dead zone when reportWriteFailures runs mid-sync.
+function extractErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// One record's write, contained: a throw (EACCES/EISDIR, a full disk, ...) is
+// caught and returned as a `failed` outcome so a single bad record can't abort
+// the batch and hide files already written for the records around it.
+function writeRecordSafely(
+  record: Record,
+  conflictStrategy: ConflictStrategy,
+  seenSlugs: Set<string>,
+): WriteOutcome {
+  try {
+    const filePath = writeMarkdown(record, conflictStrategy, seenSlugs);
+
+    if (filePath === null) {
+      return { status: 'skipped' };
+    }
+
+    return { status: 'written', filePath };
+  } catch (error) {
+    return { status: 'failed', error };
+  }
+}
 
 // Writes each record with the user's conflict strategy, keeping the record
-// alongside the path it landed at. A `null` return means the `skip` strategy
-// left an existing file untouched, so that record is dropped here and never
-// reaches the delete step — deleting a record the CLI never persisted would
-// lose it for good.
+// alongside the path it landed at. A `skipped` outcome means the `skip`
+// strategy left an existing file untouched, so that record never reaches the
+// delete step — deleting a record the CLI never persisted would lose it for
+// good. A `failed` outcome is collected (not thrown) so the rest of the batch
+// still writes; the caller surfaces the failures and exits non-zero.
 function writeRecords(
   records: Record[],
   conflictStrategy: ConflictStrategy,
-): WrittenRecord[] {
+): WriteRecordsResult {
   // One Set shared across the whole batch so `overwrite` can detect two
   // same-slug records in a single sync and avoid clobbering (see
-  // writeMarkdown/resolveStrategyForSlug). `map` preserves order, so the
-  // threading behaves the same as a sequential loop.
+  // writeMarkdown/resolveStrategyForSlug). A sequential loop preserves order
+  // and threads the same Set across every record.
   const seenSlugs = new Set<string>();
+  const written: WrittenRecord[] = [];
+  const failed: FailedRecord[] = [];
+  let skipped = 0;
 
-  return records
-    .map((record) => ({
-      record,
-      filePath: writeMarkdown(record, conflictStrategy, seenSlugs),
-    }))
-    .filter((written): written is WrittenRecord => written.filePath !== null);
+  for (const record of records) {
+    const outcome = writeRecordSafely(record, conflictStrategy, seenSlugs);
+
+    if (outcome.status === 'written') {
+      written.push({ record, filePath: outcome.filePath });
+      continue;
+    }
+
+    if (outcome.status === 'skipped') {
+      skipped += 1;
+      continue;
+    }
+
+    failed.push({ record, error: outcome.error });
+  }
+
+  return { written, failed, skipped };
+}
+
+function isControlCharacter(character: string): boolean {
+  const codePoint = character.codePointAt(0) ?? 0;
+  const isC1Control =
+    codePoint >= FIRST_C1_CONTROL_CODE && codePoint <= LAST_C1_CONTROL_CODE;
+  return (
+    codePoint <= LAST_C0_CONTROL_CODE ||
+    codePoint === DELETE_CONTROL_CODE ||
+    isC1Control
+  );
+}
+
+// Replace control characters (C0 range + DEL) in any API-controlled string
+// before it reaches the terminal. A record title is untrusted (see
+// markdown.ts slugifyTitle), so a title carrying ANSI escapes could otherwise
+// clear the screen or overwrite earlier output, including the failure warning
+// itself, with fabricated text. Done by code point rather than a regex to
+// avoid embedding control characters in source (eslint no-control-regex). The
+// uuid alongside keeps the record identifiable even if the title is emptied.
+function sanitizeForTerminal(value: string): string {
+  return Array.from(value, (character) =>
+    isControlCharacter(character) ? ' ' : character,
+  ).join('');
+}
+
+// End the write phase on the right indicator. A run where every record threw
+// is an error, not a success checkmark. An all-skipped run (the `skip` strategy
+// found every file already on disk) stays a success: nothing failed and the
+// records are intentionally left on the server, reported separately by the
+// yellow "Skipped N" line — so only an all-failed run flips to spinner.error.
+function reportWriteOutcome(
+  spinner: ReturnType<typeof yoctoSpinner>,
+  writtenCount: number,
+  failedCount: number,
+): void {
+  if (writtenCount === 0 && failedCount > 0) {
+    spinner.error(`Wrote 0 records — all ${failedCount} failed.`);
+    return;
+  }
+
+  spinner.success(`Wrote ${writtenCount} records!`);
+}
+
+// Fail loud on per-record write errors: name every record that couldn't be
+// written (with its error) and set a non-zero exit so a cron run notices,
+// rather than swallowing the failures. The failed records were never added to
+// `written`, so they're excluded from the delete step and stay on the server
+// for the next sync to retry. A no-op when nothing failed.
+function reportWriteFailures(failedRecords: FailedRecord[]): void {
+  if (failedRecords.length === 0) {
+    return;
+  }
+
+  console.error(
+    chalk.redBright(
+      `Failed to write ${failedRecords.length} record(s) — left on the server:`,
+    ),
+  );
+  failedRecords.forEach(({ record, error }) => {
+    // Sanitize the whole composed line: the uuid comes from the same untrusted
+    // API response as the title, and a filesystem error message embeds the
+    // (user-configured) target path — any of them could carry an escape.
+    console.error(
+      chalk.redBright(
+        sanitizeForTerminal(
+          `  -> ${record.title} (${record.uuid}): ${extractErrorMessage(error)}`,
+        ),
+      ),
+    );
+  });
+
+  process.exitCode = 1;
 }
 
 // PATCHes the written records synced in bounded-concurrency batches, returning
@@ -298,19 +442,55 @@ async function runDefaultSync(): Promise<void> {
 
     // Fetch records
     spinner.start('Fetching records...');
-    const allRecords = await fetchAllRecords();
+    const recordsResult = await fetchAllRecords();
 
-    if (allRecords.length === 0) {
-      spinner.success('No new records, exiting...');
+    // A failed fetch must fail loud: reporting "No new records" and exiting 0
+    // on a network/auth error silently masks a broken sync in cron. An empty
+    // account still succeeds via the `ok: true` branch below.
+    if (!recordsResult.ok) {
+      spinner.error(
+        'Failed to fetch records from the server — nothing synced.',
+      );
+      process.exitCode = 1;
       return;
     }
 
-    spinner.success(`Fetched ${allRecords.length} records!`);
+    const allRecords = recordsResult.records;
+
+    // A later page failed mid-pagination: sync what was fetched, but fail loud
+    // (error mark + non-zero exit) so cron never treats a truncated sync as a
+    // clean one. The unfetched pages stay on the server for a later run.
+    if (recordsResult.partial) {
+      spinner.error(
+        `Fetched ${allRecords.length} record(s), but a later page failed — more remain on the server. Re-run to collect them.`,
+      );
+      process.exitCode = 1;
+
+      // Nothing was fetched, so there's nothing to write or delete — return
+      // rather than running the write path and printing a confusing
+      // "Wrote 0 records!" right after the error mark.
+      if (allRecords.length === 0) {
+        return;
+      }
+    } else if (allRecords.length === 0) {
+      spinner.success('No new records, exiting...');
+      return;
+    } else {
+      spinner.success(`Fetched ${allRecords.length} records!`);
+    }
 
     // Write Records
     spinner.start('Writing records...');
-    const writtenRecords = writeRecords(allRecords, conflictStrategy);
-    spinner.success(`Wrote ${writtenRecords.length} records!`);
+    // A batch-wide precondition (unset/un-creatable output directory) throws
+    // here into the outer catch and is reported once, before the per-record
+    // loop — so a systemic error can't masquerade as N per-record failures.
+    ensureOutputDirectory();
+    const {
+      written: writtenRecords,
+      failed: failedRecords,
+      skipped: skippedCount,
+    } = writeRecords(allRecords, conflictStrategy);
+    reportWriteOutcome(spinner, writtenRecords.length, failedRecords.length);
     writtenRecords.forEach(({ filePath }) => {
       console.log(chalk.dim(`  -> ${filePath}`));
     });
@@ -318,7 +498,6 @@ async function runDefaultSync(): Promise<void> {
     // Surface records the `skip` strategy left unwritten: they stay on the
     // server (they're excluded from the delete below), so the user needs to
     // know they weren't synced rather than silently losing count of them.
-    const skippedCount = allRecords.length - writtenRecords.length;
     if (skippedCount > 0) {
       console.log(
         chalk.yellow(
@@ -326,6 +505,8 @@ async function runDefaultSync(): Promise<void> {
         ),
       );
     }
+
+    reportWriteFailures(failedRecords);
 
     // Settings unreadable: autoDelete is forced off above and we don't know
     // the user's real preference, so mutate nothing on the server. Marking
@@ -378,9 +559,25 @@ async function runDefaultSync(): Promise<void> {
     }
 
     spinner.success(`Deleted ${deleteMeta.deleted} records!`);
+
+    // End a partial sync on the truncation, not the green delete-success line —
+    // otherwise the last thing on screen reads as a clean run even though a
+    // page failed and records remain on the server (exit code is already 1).
+    if (recordsResult.partial) {
+      console.error(
+        chalk.yellow(
+          'Sync was incomplete — a later page failed to fetch. Re-run to collect the remaining records.',
+        ),
+      );
+    }
   } catch (error) {
     spinner.error('Something went wrong!');
-    console.error(chalk.redBright(error));
+    // Systemic errors surface here (unset output dir, a failed fetch/delete).
+    // Sanitize before printing: a server- or API-derived message can embed an
+    // escape sequence, same threat the per-record failure path guards against.
+    console.error(
+      chalk.redBright(sanitizeForTerminal(extractErrorMessage(error))),
+    );
     process.exitCode = 1;
   }
 }

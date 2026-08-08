@@ -215,11 +215,16 @@ const resolveStrategyForSlug = (
 // default) when no strategy is supplied. `seenSlugs` is run-scoped state the
 // caller threads across a batch so `overwrite` can't lose two same-slug
 // records written in one sync (see resolveStrategyForSlug).
-export const writeMarkdown = (
-  record: Record,
-  conflictStrategy: ConflictStrategy = DEFAULT_CONFLICT_STRATEGY,
-  seenSlugs: Set<string> = new Set(),
-): string | null => {
+// Batch-wide precondition for writing: the output directory must be configured
+// and must exist. Both failures (unset config, an un-creatable/read-only path)
+// doom every record in a sync, not just one file. A caller looping over records
+// calls this once up front and lets it throw, so a systemic failure that's
+// already present at the start of a sync surfaces once — not miscounted as N
+// identical per-record failures. writeMarkdown still calls it per record so it
+// stays self-contained and correct when used on its own; after the up-front
+// call created the directory, the per-record existsSync is true and mkdirSync
+// does not run again. Returns the resolved directory.
+export const ensureOutputDirectory = (): string => {
   const outputDirectory = getOutputDirectory();
 
   if (!outputDirectory) {
@@ -229,6 +234,16 @@ export const writeMarkdown = (
   if (!existsSync(outputDirectory)) {
     mkdirSync(outputDirectory, { recursive: true });
   }
+
+  return outputDirectory;
+};
+
+export const writeMarkdown = (
+  record: Record,
+  conflictStrategy: ConflictStrategy = DEFAULT_CONFLICT_STRATEGY,
+  seenSlugs: Set<string> = new Set(),
+): string | null => {
+  const outputDirectory = ensureOutputDirectory();
 
   const slug = slugifyTitle(record.title, record.uuid);
   const content = buildRecordDocument(record);
