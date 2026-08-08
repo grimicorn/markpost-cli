@@ -339,10 +339,11 @@ async function runDefaultSync(): Promise<void> {
     // the user their records.
     const settingsResult = await fetchSettings().catch(
       (error: unknown): SettingsReadResult => {
+        // Sanitize before printing: a propagated timeout's message embeds the
+        // (env-controlled) base URL, and any future API-derived rethrow could
+        // carry an escape sequence — same guard as the outer catch below.
         console.error(
-          chalk.redBright(
-            error instanceof Error ? error.message : String(error),
-          ),
+          chalk.redBright(sanitizeForTerminal(extractErrorMessage(error))),
         );
 
         return { ok: false };
@@ -456,8 +457,10 @@ async function runDefaultSync(): Promise<void> {
     const deleteMeta = await deleteRecords(
       writtenRecords.map(({ record }) => record.uuid),
     ).catch((error: unknown) => {
+      // Sanitize before printing, same threat as the outer catch: a
+      // server- or API-derived message (here a timeout) can embed an escape.
       console.error(
-        chalk.redBright(error instanceof Error ? error.message : String(error)),
+        chalk.redBright(sanitizeForTerminal(extractErrorMessage(error))),
       );
 
       return null;

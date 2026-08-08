@@ -26,8 +26,10 @@ export type SettingsReadResult =
 // outcome as a discriminated result. On any failure except a request timeout
 // it logs and returns `{ ok: false }` so the caller can fall back
 // conservatively instead of crashing the sync — the same resilient shape
-// `fetchSources` uses. A timeout propagates (see `logApiFailure`) so a
-// stalled read fails loud rather than silently defaulting settings.
+// `fetchSources` uses. A timeout propagates (see `logApiFailure`) rather than
+// being collapsed to `{ ok: false }` here, so the caller can tell a stalled
+// read apart from an ordinary failure and decide how to handle it (the sync
+// caller degrades it non-fatally — see `runDefaultSync`).
 export const fetchSettings = async (): Promise<SettingsReadResult> => {
   try {
     const { response, body } = await apiFetch(`${getBaseUrl()}/api/settings`, {
