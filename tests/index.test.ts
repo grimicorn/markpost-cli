@@ -673,7 +673,11 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     vi.mocked(writeMarkdown)
       .mockReturnValueOnce('/mock/output/test-title.md')
       .mockReturnValueOnce('/mock/output/title-2.md');
@@ -706,7 +710,11 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false, conflictStrategy: 'skip' }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     vi.mocked(writeMarkdown)
       .mockReturnValueOnce('/mock/output/test-title.md')
       .mockReturnValueOnce(null);
@@ -734,7 +742,11 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false, conflictStrategy: 'skip' }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     vi.mocked(writeMarkdown).mockReturnValue(null);
 
     await import('@/index.js');
@@ -757,7 +769,11 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord],
+      partial: false,
+    });
     vi.mocked(writeMarkdown).mockReturnValue('/mock/output/test-title.md');
     vi.mocked(markRecordSynced).mockResolvedValue(false);
 
@@ -785,7 +801,11 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     vi.mocked(writeMarkdown)
       .mockReturnValueOnce('/mock/output/test-title.md')
       .mockReturnValueOnce('/mock/output/title-2.md');
@@ -830,7 +850,11 @@ describe('index', () => {
     vi.mocked(fetchSettings).mockResolvedValue(
       mockSettings({ autoDelete: false }),
     );
-    vi.mocked(fetchAllRecords).mockResolvedValue(records);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records,
+      partial: false,
+    });
     vi.mocked(writeMarkdown).mockImplementation(
       (record: Record) => `/mock/output/${record.uuid}.md`,
     );
@@ -968,7 +992,11 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     vi.mocked(writeMarkdown).mockImplementation((record) => {
       if (record.uuid === 'abc-123') {
         throw new Error('EACCES: permission denied');
@@ -1021,7 +1049,11 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     vi.mocked(writeMarkdown).mockImplementation(() => {
       throw new Error('EISDIR: illegal operation on a directory');
     });
@@ -1056,7 +1088,11 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([evilRecord]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [evilRecord],
+      partial: false,
+    });
     vi.mocked(writeMarkdown).mockImplementation(() => {
       throw new Error('EACCES: permission denied');
     });
@@ -1092,7 +1128,11 @@ describe('index', () => {
 
       vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
       vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-      vi.mocked(fetchAllRecords).mockResolvedValue([evilRecord]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [evilRecord],
+        partial: false,
+      });
       vi.mocked(writeMarkdown).mockImplementation(() => {
         throw new Error('EACCES: permission denied');
       });
@@ -1120,7 +1160,11 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord, mockRecord2]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     // A batch-wide precondition failure throws before the per-record loop.
     // `Once` so this throw can't leak into later tests (beforeEach's
     // clearAllMocks resets call history but not implementations).
@@ -1151,11 +1195,11 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([
-      mockRecord,
-      recordSkipped,
-      recordFailed,
-    ]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord, recordSkipped, recordFailed],
+      partial: false,
+    });
     // Written, skipped (null), failed (throw) — one of each, keyed off the
     // record so the outcome doesn't depend on call order.
     vi.mocked(writeMarkdown).mockImplementation((record) => {
@@ -1195,7 +1239,11 @@ describe('index', () => {
 
     vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
     vi.mocked(fetchSettings).mockResolvedValue(mockSettings());
-    vi.mocked(fetchAllRecords).mockResolvedValue([mockRecord]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord],
+      partial: false,
+    });
     // A thrown string (not an Error) must still render its text, never
     // "[object Object]" — exercises extractErrorMessage's String(error) branch.
     vi.mocked(writeMarkdown).mockImplementation(() => {
