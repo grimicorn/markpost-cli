@@ -131,7 +131,11 @@ describe('runRecordsCommand', () => {
 
     it('passes no filters through when no flags are given', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -145,7 +149,11 @@ describe('runRecordsCommand', () => {
 
     it('threads --source, --status, and --search into the fetch', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand([
@@ -163,11 +171,21 @@ describe('runRecordsCommand', () => {
         status: 'pending',
         search: 'meeting notes',
       });
+      // Assert the fetched record actually renders, so the test breaks if the
+      // filter path stops reaching the print step (not just the fetch call).
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('First Record'),
+      );
+      expect(process.exitCode).not.toBe(1);
     });
 
     it('accepts the --flag=value form', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list', '--source=email']);
@@ -186,7 +204,11 @@ describe('runRecordsCommand', () => {
       await runRecordsCommand(['list', '--bogus', 'value']);
 
       expect(fetchAllRecords).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('bogus'),
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
 
@@ -197,7 +219,11 @@ describe('runRecordsCommand', () => {
       await runRecordsCommand(['list', '--source=']);
 
       expect(fetchAllRecords).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '--source needs a non-empty value.',
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
 
@@ -208,7 +234,11 @@ describe('runRecordsCommand', () => {
       await runRecordsCommand(['list', 'webhook']);
 
       expect(fetchAllRecords).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('Unexpected argument "webhook"'),
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
 
@@ -225,7 +255,11 @@ describe('runRecordsCommand', () => {
       ]);
 
       expect(fetchAllRecords).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '--source was given more than once. Pass it only once.',
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
 
@@ -236,13 +270,21 @@ describe('runRecordsCommand', () => {
       await runRecordsCommand(['list', '--source', '   ']);
 
       expect(fetchAllRecords).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: '--source needs a non-empty value.',
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
 
     it('trims surrounding whitespace from a filter value before sending it', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list', '--search', '  meeting notes  ']);
@@ -261,7 +303,11 @@ describe('runRecordsCommand', () => {
       await runRecordsCommand(['list', '--search']);
 
       expect(fetchAllRecords).not.toHaveBeenCalled();
-      expect(console.error).toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('search'),
+        }),
+      );
       expect(process.exitCode).toBe(1);
     });
 
