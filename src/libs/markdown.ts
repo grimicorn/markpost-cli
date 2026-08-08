@@ -238,15 +238,18 @@ export const ensureOutputDirectory = (): string => {
   return outputDirectory;
 };
 
+// `includeFrontmatter` is the user's `frontmatter` setting; when off the file
+// is written without a frontmatter block (see buildRecordDocument).
 export const writeMarkdown = (
   record: Record,
   conflictStrategy: ConflictStrategy = DEFAULT_CONFLICT_STRATEGY,
   seenSlugs: Set<string> = new Set(),
+  includeFrontmatter = true,
 ): string | null => {
   const outputDirectory = ensureOutputDirectory();
 
   const slug = slugifyTitle(record.title, record.uuid);
-  const content = buildRecordDocument(record);
+  const content = buildRecordDocument(record, includeFrontmatter);
   const effectiveStrategy = resolveStrategyForSlug(
     conflictStrategy,
     slug,
