@@ -55,16 +55,18 @@ describe('fetchAllRecords', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('throws when the initial fetch fails, rather than reporting an empty result', async () => {
+  // A failed INITIAL fetch must surface as `{ ok: false }` — never an empty
+  // array, which the caller can't tell apart from a legitimately empty account
+  // and would report as "No new records" while exiting 0 (issue #63).
+  it('returns { ok: false } when the initial fetch fails', async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error('Network error'));
-    await expect(fetchAllRecords()).rejects.toThrow(
-      /could not fetch records/i,
-    );
+    expect(await fetchAllRecords()).toEqual({ ok: false });
   });
 
-  it('throws when the server rejects the request (e.g. an invalid filter)', async () => {
-    // markpost answers an invalid filter[source] with a 400; this must not be
-    // rendered to the user as "No records found."
+  // markpost answers an invalid filter[source] with a 400; that must surface as
+  // `{ ok: false }`, never an empty array the caller renders as "No records
+  // found." — the same silent-failure concern as a network error above.
+  it('returns { ok: false } when the server rejects the request (e.g. an invalid filter)', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       json: () =>
@@ -79,9 +81,21 @@ describe('fetchAllRecords', () => {
         }),
     });
 
-    await expect(fetchAllRecords({ source: 'bogus' })).rejects.toThrow(
-      /could not fetch records/i,
-    );
+    expect(await fetchAllRecords({ source: 'bogus' })).toEqual({ ok: false });
+  });
+
+  // A legitimately empty account is a success, distinct from a failed fetch.
+  it('returns { ok: true, records: [] } when the account has no records', async () => {
+    mockFetch({
+      data: [],
+      meta: { total: 0, size: 100, hasMore: false },
+      links: { next: null, prev: null },
+    });
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [],
+      partial: false,
+    });
   });
 
   it('returns records directly when there is only one page', async () => {
@@ -90,8 +104,31 @@ describe('fetchAllRecords', () => {
       meta: { total: 1, size: 100, hasMore: false },
       links: { next: null, prev: null },
     });
-    expect(await fetchAllRecords()).toEqual([mockRecord]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: false,
+    });
     // A single page must not trigger a second fetch.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  // The server can signal more pages via `meta.hasMore` even when `links.next`
+  // is null (a malformed `links` is defaulted to `next: null` upstream). That
+  // is still a truncation, so the read must be flagged `partial: true` rather
+  // than reported complete.
+  it('flags partial when meta.hasMore is true but links.next is null', async () => {
+    mockFetch({
+      data: [{ attributes: mockRecord }],
+      meta: { total: 2, size: 1, hasMore: true },
+      links: { next: null, prev: null },
+    });
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
+    // No cursor to follow, so it must not fire a second fetch.
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -120,7 +157,11 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     // This is the regression check for the bug in #15: the second page must
     // actually be requested using the cursor from `links.next`, not skipped.
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -220,11 +261,11 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([
-      mockRecord,
-      mockRecord2,
-      mockRecord3,
-    ]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2, mockRecord3],
+      partial: false,
+    });
     expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 
@@ -244,7 +285,14 @@ describe('fetchAllRecords', () => {
           }),
       })
       .mockRejectedValueOnce(new Error('Network error'));
-    expect(await fetchAllRecords()).toEqual([mockRecord]);
+    // A later page failing keeps the pages already collected but flags the
+    // read `partial: true`, so the caller can surface the truncation rather
+    // than presenting one page as the whole set.
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
   });
 
   it('stops instead of looping forever if the server repeats the same cursor', async () => {
@@ -261,7 +309,13 @@ describe('fetchAllRecords', () => {
         }),
     });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord]);
+    // A repeated cursor means the server still claims more pages while looping
+    // us over ones already fetched, so the read is incomplete: `partial: true`.
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord],
+      partial: true,
+    });
     // The second response repeats the same `page[after]=abc-123` cursor as
     // the first, so the loop must break rather than fetch forever.
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -317,11 +371,13 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([
-      mockRecord,
-      mockRecord2,
-      mockRecord3,
-    ]);
+    // The cycle back to the already-seen cursor-a means the server still claims
+    // more while looping us, so the read is incomplete: `partial: true`.
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2, mockRecord3],
+      partial: true,
+    });
     // Without cycle detection this would alternate between cursor-a and
     // cursor-b forever; cursor-a must not be re-fetched once seen.
     expect(global.fetch).toHaveBeenCalledTimes(3);
@@ -352,7 +408,11 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       'https://example.com/api/records?page[size]=100&page[after]=abc%2Bxyz',
@@ -389,7 +449,11 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       'https://example.com/api/records?page[size]=100&page[after]=abc-123',
@@ -416,7 +480,14 @@ describe('fetchAllRecords', () => {
         }),
     });
 
-    await expect(fetchAllRecords()).resolves.toEqual([mockRecord]);
+    // `links.next` was present but its cursor is undecodable, so the server had
+    // a further page we can't follow: the read is incomplete (`partial: true`),
+    // not a clean end of pagination.
+    await expect(fetchAllRecords()).resolves.toEqual({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
@@ -445,7 +516,11 @@ describe('fetchAllRecords', () => {
           }),
       });
 
-    expect(await fetchAllRecords()).toEqual([mockRecord, mockRecord2]);
+    expect(await fetchAllRecords()).toEqual({
+      ok: true,
+      records: [mockRecord, mockRecord2],
+      partial: false,
+    });
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
       'https://example.com/api/records?page[size]=100&page[after]=YWJj%3D%3D',

@@ -11,6 +11,7 @@ vi.mock('chalk', () => ({
   default: {
     redBright: vi.fn((value: unknown) => value),
     bold: vi.fn((value: unknown) => value),
+    yellow: vi.fn((value: unknown) => value),
   },
 }));
 
@@ -40,7 +41,11 @@ describe('runRecordsCommand', () => {
   it('always checks config before dispatching', async () => {
     const { checkConfig } = await import('@/libs/config.js');
     const { fetchAllRecords } = await import('@/libs/records.js');
-    vi.mocked(fetchAllRecords).mockResolvedValue([]);
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [],
+      partial: false,
+    });
     const { runRecordsCommand } = await import('@/commands/records.js');
 
     await runRecordsCommand(['list']);
@@ -87,7 +92,11 @@ describe('runRecordsCommand', () => {
   describe('list', () => {
     it('prints "No records found." when there are none', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -97,7 +106,11 @@ describe('runRecordsCommand', () => {
 
     it('prints each fetched record', async () => {
       const { fetchAllRecords } = await import('@/libs/records.js');
-      vi.mocked(fetchAllRecords).mockResolvedValue([firstRecord, secondRecord]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord, secondRecord],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
@@ -256,12 +269,79 @@ describe('runRecordsCommand', () => {
       const { fetchAllRecords, deleteRecords } = await import(
         '@/libs/records.js'
       );
-      vi.mocked(fetchAllRecords).mockResolvedValue([firstRecord, secondRecord]);
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord, secondRecord],
+        partial: false,
+      });
       const { runRecordsCommand } = await import('@/commands/records.js');
 
       await runRecordsCommand(['list']);
 
       expect(deleteRecords).not.toHaveBeenCalled();
+    });
+
+    // A failed fetch (`ok: false`) must not print "No records found." — it has
+    // to surface loudly and exit non-zero, distinct from an empty account.
+    it('fails loud and exits non-zero when the fetch fails', async () => {
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      vi.mocked(fetchAllRecords).mockResolvedValue({ ok: false });
+      const { runRecordsCommand } = await import('@/commands/records.js');
+
+      await runRecordsCommand(['list']);
+
+      expect(console.log).not.toHaveBeenCalledWith('No records found.');
+      // Assert the specific fetch-failure message, not a bare console.error
+      // call any other throw in the command would also satisfy.
+      expect(console.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Failed to fetch records from the server.',
+        }),
+      );
+      expect(process.exitCode).toBe(1);
+    });
+
+    // A partial read (a later page failed) must still print what was fetched
+    // but warn it may be incomplete and exit non-zero — never present a
+    // truncated list as the full set.
+    it('warns and exits non-zero on a partial read, still printing what it got', async () => {
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [firstRecord],
+        partial: true,
+      });
+      const { runRecordsCommand } = await import('@/commands/records.js');
+
+      await runRecordsCommand(['list']);
+
+      expect(console.error).toHaveBeenCalledWith(
+        expect.stringContaining('this list may be incomplete'),
+      );
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('First Record'),
+      );
+      expect(process.exitCode).toBe(1);
+    });
+
+    // A partial read that returned zero records must not claim "No records
+    // found." — the read failed before any page came back, not an empty account.
+    it('does not print "No records found." on a partial read with no records', async () => {
+      const { fetchAllRecords } = await import('@/libs/records.js');
+      vi.mocked(fetchAllRecords).mockResolvedValue({
+        ok: true,
+        records: [],
+        partial: true,
+      });
+      const { runRecordsCommand } = await import('@/commands/records.js');
+
+      await runRecordsCommand(['list']);
+
+      expect(console.log).not.toHaveBeenCalledWith('No records found.');
+      expect(console.log).toHaveBeenCalledWith(
+        expect.stringContaining('the read failed partway through'),
+      );
+      expect(process.exitCode).toBe(1);
     });
   });
 
