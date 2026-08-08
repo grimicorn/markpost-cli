@@ -39,7 +39,7 @@ The destructive fetch/write/delete sync runs only under the explicit
 ### Setup
 
 ```bash
-git clone https://github.com/grimicorn/markpost-cli.git
+git clone https://github.com/neonpixels-studio/markpost-cli.git
 cd markpost-cli
 npm install
 ```
@@ -69,7 +69,7 @@ Copy [`.envrc`](.envrc) and populate your values. If you use [direnv](https://di
 
 ### Contract sync
 
-The CLI talks to [markpost](https://github.com/grimicorn/markpost)'s API, so its
+The CLI talks to [markpost](https://github.com/neonpixels-studio/markpost)'s API, so its
 request/response types need to match markpost's real contract exactly — a
 structural mismatch here previously caused real pagination and
 error-swallowing bugs. Instead of hand-mirroring markpost's types (which drift
