@@ -11,6 +11,7 @@ import slugify from '@sindresorhus/slugify';
 
 import { config } from '@/libs/config.js';
 import {
+  ensureOutputDirectory,
   MAX_COLLISION_SUFFIX,
   readMarkdown,
   writeMarkdown,
@@ -472,6 +473,38 @@ describe('writeMarkdown', () => {
 
       expect(() => writeMarkdown(mockRecord, 'skip')).toThrow(permissionError);
     });
+  });
+});
+
+describe('ensureOutputDirectory', () => {
+  beforeEach(() => {
+    process.env.OUTPUT_DIRECTORY = outputDirectory;
+    vi.mocked(existsSync).mockReturnValue(false);
+    vi.mocked(config.get).mockReturnValue(undefined);
+  });
+
+  afterEach(() => {
+    delete process.env.OUTPUT_DIRECTORY;
+    vi.clearAllMocks();
+  });
+
+  it('throws when neither OUTPUT_DIRECTORY nor the persisted config value is set', () => {
+    delete process.env.OUTPUT_DIRECTORY;
+    expect(() => ensureOutputDirectory()).toThrow('Output directory is not set!');
+  });
+
+  it('creates the directory once and skips mkdirSync when it already exists', () => {
+    // First call: directory missing, so it's created.
+    const firstResult = ensureOutputDirectory();
+    expect(firstResult).toBe(outputDirectory);
+    expect(mkdirSync).toHaveBeenCalledTimes(1);
+
+    // Second call after the directory now exists: the up-front creation stands,
+    // so no second mkdirSync (the idempotence the writeMarkdown comment relies
+    // on when it re-invokes this per record).
+    vi.mocked(existsSync).mockReturnValue(true);
+    ensureOutputDirectory();
+    expect(mkdirSync).toHaveBeenCalledTimes(1);
   });
 });
 
