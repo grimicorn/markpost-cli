@@ -563,6 +563,7 @@ async function runDefaultSync(): Promise<void> {
     // empty uuid list would be a wasted, possibly-rejected request reported as
     // success).
     if (writtenRecords.length === 0) {
+      reportIncompleteSync(recordsResult.partial);
       return;
     }
 

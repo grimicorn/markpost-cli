@@ -955,6 +955,35 @@ describe('index', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  it('warns the sync was incomplete on the autoDelete path when a page failed and nothing was written', async () => {
+    const { fetchAllRecords, deleteRecords } = await import('@/libs/records.js');
+    const { writeMarkdown } = await import('@/libs/markdown.js');
+    const { fetchSettings } = await import('@/libs/settings.js');
+    const { default: yoctoSpinner } = await import('yocto-spinner');
+
+    vi.mocked(yoctoSpinner).mockReturnValue(mockSpinner);
+    vi.mocked(fetchSettings).mockResolvedValue(
+      mockSettings({ autoDelete: true, conflictStrategy: 'skip' }),
+    );
+    // A later page failed and every fetched record is skipped, so nothing is
+    // written and no delete is issued — but the user must still be told a page
+    // failed rather than seeing a bare "Wrote 0 records!" as the last word.
+    vi.mocked(fetchAllRecords).mockResolvedValue({
+      ok: true,
+      records: [mockRecord],
+      partial: true,
+    });
+    vi.mocked(writeMarkdown).mockReturnValue(null);
+
+    await import('@/index.js');
+
+    expect(deleteRecords).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining('Sync was incomplete'),
+    );
+    expect(process.exitCode).toBe(1);
+  });
+
   it('deletes records (never marks synced) when autoDelete is true', async () => {
     const { fetchAllRecords, deleteRecords, markRecordSynced } = await import(
       '@/libs/records.js'
