@@ -350,14 +350,42 @@ async function runDefaultSync(): Promise<void> {
 
     // Fetch records
     spinner.start('Fetching records...');
-    const allRecords = await fetchAllRecords();
+    const recordsResult = await fetchAllRecords();
 
-    if (allRecords.length === 0) {
-      spinner.success('No new records, exiting...');
+    // A failed fetch must fail loud: reporting "No new records" and exiting 0
+    // on a network/auth error silently masks a broken sync in cron. An empty
+    // account still succeeds via the `ok: true` branch below.
+    if (!recordsResult.ok) {
+      spinner.error(
+        'Failed to fetch records from the server — nothing synced.',
+      );
+      process.exitCode = 1;
       return;
     }
 
-    spinner.success(`Fetched ${allRecords.length} records!`);
+    const allRecords = recordsResult.records;
+
+    // A later page failed mid-pagination: sync what was fetched, but fail loud
+    // (error mark + non-zero exit) so cron never treats a truncated sync as a
+    // clean one. The unfetched pages stay on the server for a later run.
+    if (recordsResult.partial) {
+      spinner.error(
+        `Fetched ${allRecords.length} record(s), but a later page failed — more remain on the server. Re-run to collect them.`,
+      );
+      process.exitCode = 1;
+
+      // Nothing was fetched, so there's nothing to write or delete — return
+      // rather than running the write path and printing a confusing
+      // "Wrote 0 records!" right after the error mark.
+      if (allRecords.length === 0) {
+        return;
+      }
+    } else if (allRecords.length === 0) {
+      spinner.success('No new records, exiting...');
+      return;
+    } else {
+      spinner.success(`Fetched ${allRecords.length} records!`);
+    }
 
     // Write Records
     spinner.start('Writing records...');
@@ -419,6 +447,17 @@ async function runDefaultSync(): Promise<void> {
     }
 
     spinner.success(`Deleted ${deleteMeta.deleted} records!`);
+
+    // End a partial sync on the truncation, not the green delete-success line —
+    // otherwise the last thing on screen reads as a clean run even though a
+    // page failed and records remain on the server (exit code is already 1).
+    if (recordsResult.partial) {
+      console.error(
+        chalk.yellow(
+          'Sync was incomplete — a later page failed to fetch. Re-run to collect the remaining records.',
+        ),
+      );
+    }
   } catch (error) {
     spinner.error('Something went wrong!');
     // Systemic errors surface here (unset output dir, a failed fetch/delete).
