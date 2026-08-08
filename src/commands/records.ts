@@ -101,9 +101,9 @@ const printRecord = (record: Record): void => {
   console.log(`  created at: ${record.createdAt}`);
 };
 
-// Read-only preview of what the default sync would fetch. Deliberately
-// never touches deleteRecords: this is the safe alternative to running the
-// no-arg sync just to see what's pending.
+// Read-only preview of the records on the server (optionally filtered).
+// Deliberately never touches deleteRecords: this is the safe alternative to
+// running the no-arg sync just to see what's there.
 const listRecords = async (filters: RecordListFilters): Promise<void> => {
   const result = await fetchAllRecords(filters);
 
