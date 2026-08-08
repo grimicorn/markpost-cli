@@ -71,33 +71,83 @@ const extractAfterCursor = (
   return undefined;
 };
 
-export const fetchAllRecords = async (): Promise<Record[]> => {
+// A read either succeeded (`ok: true`) or the INITIAL page fetch failed
+// (`ok: false`). Collapsing a failed initial fetch to an empty array — the old
+// behavior — made a network/auth error indistinguishable from "no pending
+// records", so `sync` reported success and exited 0 while syncing nothing: a
+// fail-loud violation that silently masked sync failures in cron. This mirrors
+// `fetchSettings`'s `SettingsReadResult` so the caller must handle the failure
+// explicitly rather than reading a bare array that hides it.
+//
+// On success, `records` may be empty (a legitimately empty account) and
+// `partial` reports whether a LATER page failed mid-pagination. We keep the
+// pages already collected (discarding them would be worse), but flag the read
+// incomplete rather than silently returning a truncated result the caller
+// can't tell apart from a complete one — the same fail-loud concern one page
+// in. The caller surfaces `partial` (warn + non-zero exit); the unfetched
+// pages stay on the server for a later run.
+export type FetchAllRecordsResult =
+  { ok: true; records: Record[]; partial: boolean } | { ok: false };
+
+export const fetchAllRecords = async (): Promise<FetchAllRecordsResult> => {
   const initial = await fetchPaginatedRecords();
 
   if (!initial) {
-    return [];
+    return { ok: false };
   }
 
   const records = [initial.records];
   const seenCursors = new Set<string>();
-  let after = extractAfterCursor(initial.links?.next);
+  let partial = false;
 
-  // `seenCursors` bounds the loop against any repeating cursor (not just an
-  // immediate repeat), so a misbehaving server can't hang the CLI or produce
-  // an unbounded stream of duplicate records.
-  while (after && !seenCursors.has(after)) {
+  // Resolve the next cursor from a page. The server signals "more pages" via
+  // either `links.next` or `meta.hasMore` — and since `fetchPaginatedRecords`
+  // defaults a malformed `links` to `next: null`, `hasMore` can be the only
+  // surviving signal. If the page says there's more but yields no usable cursor
+  // (null/malformed link, missing `page[after]`, or the `hasMore`-only case),
+  // the server had pages we can't follow, so flag the read incomplete rather
+  // than treating it as a clean end of pagination.
+  const nextCursorFrom = (page: {
+    meta: PaginatedRecordsMeta;
+    links: ApiPaginationLinks;
+  }): string | undefined => {
+    const cursor = extractAfterCursor(page.links.next);
+
+    if ((page.links.next || page.meta.hasMore) && !cursor) {
+      partial = true;
+    }
+
+    return cursor;
+  };
+
+  let after = nextCursorFrom(initial);
+
+  while (after) {
+    // `seenCursors` bounds the loop against any repeating cursor (not just an
+    // immediate repeat), so a misbehaving server can't hang the CLI. A repeat
+    // means the server looped us over already-fetched pages while still
+    // advertising more, so stop but flag the truncation.
+    if (seenCursors.has(after)) {
+      partial = true;
+      break;
+    }
+
     seenCursors.add(after);
     const subsequent = await fetchPaginatedRecords(after);
 
     if (!subsequent) {
+      // A later page failed (`fetchPaginatedRecords` already logged why). Stop,
+      // but mark the read incomplete so the caller doesn't present a truncated
+      // set as the whole.
+      partial = true;
       break;
     }
 
     records.push(subsequent.records);
-    after = extractAfterCursor(subsequent.links?.next);
+    after = nextCursorFrom(subsequent);
   }
 
-  return records.flat(1) as Record[];
+  return { ok: true, records: records.flat(1) as Record[], partial };
 };
 
 const buildRecordsQuery = (size: number, after?: string): string => {

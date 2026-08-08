@@ -35,10 +35,37 @@ const printRecord = (record: Record): void => {
 // never touches deleteRecords: this is the safe alternative to running the
 // no-arg sync just to see what's pending.
 const listRecords = async (): Promise<void> => {
-  const records = await fetchAllRecords();
+  const result = await fetchAllRecords();
+
+  // A failed fetch must not masquerade as "No records found." — throw so the
+  // command's catch reports it loudly and exits non-zero, rather than printing
+  // the same message an empty account would produce.
+  if (!result.ok) {
+    throw new Error('Failed to fetch records from the server.');
+  }
+
+  const { records, partial } = result;
+
+  // A partial read (a later page failed mid-pagination) must not present a
+  // truncated list as the full set. Warn and exit non-zero so the preview
+  // stays honest — `fetchPaginatedRecords` already logged the cause.
+  if (partial) {
+    console.error(
+      chalk.yellow(
+        'Warning: a later page failed to fetch — this list may be incomplete.',
+      ),
+    );
+    process.exitCode = 1;
+  }
 
   if (records.length === 0) {
-    console.log('No records found.');
+    // A partial read with zero records must not claim "No records found." — the
+    // read failed before any page came back, which is not an empty account.
+    console.log(
+      partial
+        ? 'No records fetched — the read failed partway through.'
+        : 'No records found.',
+    );
     return;
   }
 
